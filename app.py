@@ -1,17 +1,18 @@
 import io
+import os
+import tempfile
 
-import contextily as ctx
-import geopandas as gpd
-import matplotlib.colors as mcolors
+import contextily
 import matplotlib.pyplot as plt
+import numpy as np
 import pymongo
+import pyproj
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
-from shapely.geometry import Point
 
-MONGO_URI = ""
-MONGO_DB = ""
-MONGO_COLLECTION = ""
+MONGO_URI = os.environ.get("MONGO_URI")
+MONGO_DB = os.environ.get("MONGO_DB")
+MONGO_COLLECTION = os.environ.get("MONGO_COLLECTION")
 
 app = FastAPI()
 
@@ -77,27 +78,25 @@ async def root():
         {"_id": "doc_50", "lat": 52.59625, "lng": 5.61758, "power": 4.68},
     ]
 
-    # convert data to gdf
-    gdf = gpd.GeoDataFrame(
-        documents,
-        geometry=[Point(document["lng"], document["lat"]) for document in documents],
-        crs="EPSG:4326",
-    ).to_crs(epsg=3857)
+    lngs = np.array([document["lng"] for document in documents])
+    lats = np.array([document["lat"] for document in documents])
+    powers = np.array([document["power"] for document in documents])
 
-    # initialize plot
-    fig, ax = plt.subplots()
+    projection_transformer = pyproj.Transformer.from_crs(
+        "EPSG:4326", "EPSG:3857", always_xy=True
+    )
+    x_coordinates, y_coordinates = projection_transformer.transform(lngs, lats)
 
-    # plot dots
-    gdf.plot(ax=ax, column="power")
+    figure, axes = plt.subplots()
+    axes.set_axis_off()
 
-    # add map
-    ctx.add_basemap(ax, source=ctx.providers.CartoDB.Positron)
+    axes.scatter(x_coordinates, y_coordinates, c=powers)
 
-    # render figure to byte buffer
+    contextily.add_basemap(axes)
+
     output_buffer = io.BytesIO()
-    fig.savefig(output_buffer, format="png")
-    plt.close(fig)
+    figure.savefig(output_buffer, format="png")
+    plt.close(figure)
 
-    # stream output
     output_buffer.seek(0)
     return StreamingResponse(output_buffer, media_type="image/png")
