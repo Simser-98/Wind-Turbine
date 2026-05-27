@@ -87,7 +87,7 @@ async def root():
     )
     x_coordinates, y_coordinates = projection_transformer.transform(lngs, lats)
 
-    figure, axes = plt.subplots()
+    figure, axes = plt.subplots(figsize=(10, 10), dpi=150)
     axes.set_axis_off()
 
     axes.scatter(x_coordinates, y_coordinates, c=powers)
