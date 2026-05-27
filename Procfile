@@ -1,1 +1,1 @@
-web: fastapi run --port 5000 application.py
+web: fastapi run
