@@ -77,47 +77,27 @@ async def root():
         {"_id": "doc_50", "lat": 52.59625, "lng": 5.61758, "power": 4.68},
     ]
 
+    # convert data to gdf
     gdf = gpd.GeoDataFrame(
         documents,
-        geometry=[Point(d["lng"], d["lat"]) for d in documents],
+        geometry=[Point(document["lng"], document["lat"]) for document in documents],
         crs="EPSG:4326",
-    ).to_crs(
-        epsg=3857
-    )  # Web Mercator, required by contextily
+    ).to_crs(epsg=3857)
 
-    fig, ax = plt.subplots(figsize=(6, 8))
+    # initialize plot
+    fig, ax = plt.subplots()
 
-    norm = mcolors.Normalize(vmin=gdf["power"].min(), vmax=gdf["power"].max())
-    cmap = plt.cm.RdYlGn
+    # plot dots
+    gdf.plot(ax=ax, column="power")
 
-    gdf.plot(
-        ax=ax,
-        c=gdf["power"],
-        cmap=cmap,
-        norm=norm,
-        markersize=30,
-        alpha=0.85,
-        edgecolor="white",
-        linewidth=0.3,
-        zorder=5,
-    )
+    # add map
+    ctx.add_basemap(ax, source=ctx.providers.CartoDB.Positron)
 
-    ctx.add_basemap(ax, source=ctx.providers.CartoDB.Positron, zoom=7)
-
-    ax.set_axis_off()
-    plt.colorbar(
-        plt.cm.ScalarMappable(norm=norm, cmap=cmap),
-        ax=ax,
-        orientation="vertical",
-        pad=0.02,
-        fraction=0.03,
-        label="Power",
-    )
-    ax.set_title("Power Map — Netherlands", fontsize=13, fontweight="bold", pad=10)
-    plt.tight_layout()
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    # render figure to byte buffer
+    output_buffer = io.BytesIO()
+    fig.savefig(output_buffer, format="png")
     plt.close(fig)
-    buf.seek(0)
-    return StreamingResponse(buf, media_type="image/png")
+
+    # stream output
+    output_buffer.seek(0)
+    return StreamingResponse(output_buffer, media_type="image/png")
