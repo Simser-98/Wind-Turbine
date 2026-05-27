@@ -95,7 +95,7 @@ async def root():
     contextily.add_basemap(axes)
 
     output_buffer = io.BytesIO()
-    figure.savefig(output_buffer, format="png")
+    figure.savefig(output_buffer, format="png", bbox_inches="tight", pad_inches=0)
     plt.close(figure)
 
     output_buffer.seek(0)
