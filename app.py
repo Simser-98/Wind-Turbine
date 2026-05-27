@@ -1,6 +1,5 @@
 import io
 import os
-import tempfile
 
 import contextily
 import matplotlib.pyplot as plt
