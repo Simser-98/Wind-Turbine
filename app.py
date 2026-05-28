@@ -13,6 +13,9 @@ MONGO_URI = os.environ.get("MONGO_URI")
 MONGO_DB = os.environ.get("MONGO_DB")
 MONGO_COLLECTION = os.environ.get("MONGO_COLLECTION")
 
+FIGURE_SIZE: tuple[int, int] = (12, 10)
+FIGURE_DPI: int = 150
+
 app = FastAPI()
 
 
@@ -21,7 +24,7 @@ async def root():
     # mongo_client = pymongo.MongoClient(MONGO_URI)
     # mongo_db = mongo_client[MONGO_DB]
     # mongo_collection = mongo_db[MONGO_COLLECTION]
-    # TODO fetch data from collection ...
+    # documents = list(mongo_collection.find())
     # mongo_client.close()
 
     documents = [
@@ -61,18 +64,20 @@ async def root():
     )
     x_coordinates, y_coordinates = projection_transformer.transform(lngs, lats)
 
-    figure, axes = plt.subplots(figsize=(12, 10), dpi=150)
+    figure, axes = plt.subplots(
+        figsize=FIGURE_SIZE, dpi=FIGURE_DPI, layout="compressed"
+    )
     axes.set_axis_off()
 
     scatter = axes.scatter(x_coordinates, y_coordinates, c=power_output)
 
     contextily.add_basemap(axes)
 
-    color_bar = figure.colorbar(scatter, ax=axes)
+    color_bar = figure.colorbar(scatter)
     color_bar.set_label("Power Output [MW]")
 
     output_buffer = io.BytesIO()
-    figure.savefig(output_buffer, format="png", bbox_inches="tight", pad_inches=0)
+    figure.savefig(output_buffer, format="png")
     plt.close(figure)
 
     output_buffer.seek(0)
