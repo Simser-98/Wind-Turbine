@@ -10,4 +10,8 @@ Download the dataset from [Kaggle](https://www.kaggle.com/datasets/berkerisen/wi
 - `wind_analysis.ipynb` — Jupyter notebook with full EDA and visualizations
 
 ### Requirements
-pip install pandas numpy matplotlib
+install with:
+
+```sh
+pip install -r requirements.txt
+```
