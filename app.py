@@ -8,7 +8,6 @@ import pymongo
 import pyproj
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
-from data_setup import get_model_predictions
 
 MONGO_URI = os.environ.get("MONGO_URI")
 MONGO_DB = os.environ.get("MONGO_DB")
@@ -20,6 +19,7 @@ FIGURE_DPI: int = 150
 app = FastAPI()
 
 
+
 @app.get("/")
 async def root():
     # mongo_client = pymongo.MongoClient(MONGO_URI)
@@ -28,11 +28,6 @@ async def root():
     # documents = list(mongo_collection.find())
     # mongo_client.close()
 
-    documents = get_model_predictions()
-
-    # Insert
-    if documents:
-        MONGO_COLLECTION.insert_many(documents)
 
     lngs = np.array([document["location"]["coordinates"][0] for document in documents])
     lats = np.array([document["location"]["coordinates"][1] for document in documents])
