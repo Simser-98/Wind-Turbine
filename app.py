@@ -30,6 +30,10 @@ async def root():
 
     documents = get_model_predictions()
 
+    # Insert
+    if documents:
+        MONGO_COLLECTION.insert_many(documents)
+
     lngs = np.array([document["location"]["coordinates"][0] for document in documents])
     lats = np.array([document["location"]["coordinates"][1] for document in documents])
     power_output = np.array([document["expectedPowerOutput"] for document in documents])
