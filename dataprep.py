@@ -38,20 +38,14 @@ class Location:
     lat: float
     lon: float
 
-DUTCH_LOCATIONS: list[Location] = [
-    Location("Den Helder (coast, N)",   52.96, 4.76),
-    Location("IJmuiden (coast)",        52.46, 4.55),
-    Location("Lelystad (Flevoland)",    52.51, 5.47),
-    Location("Groningen (NE inland)",   53.22, 6.57),
-    Location("Rotterdam (delta)",       51.92, 4.48),
-    Location("Eindhoven (S inland)",    51.44, 5.48),
-    Location("Maastricht (SE inland)",  50.85, 5.69),
-    Location("Terschelling (Wadden)",   53.40, 5.34),
-]
+# Area of the Netherlands
+NL_LAT_MIN, NL_LAT_MAX = 50.75, 53.55
+NL_LON_MIN, NL_LON_MAX = 3.35, 7.25
 
-# Historical period — 1 full year is enough for the MVP (seasonality covered).
-ARCHIVE_START = "2023-01-01"
-ARCHIVE_END   = "2023-12-31"
+# 0.2 deg = 22 km lat / 14 km lon
+GRID_STEP_DEG = 0.2
+
+BATCH_SIZE = 100
 
 # Turbine operating range used as a sanity / feature definition.
 CUT_IN_SPEED  = 3.0   # m/s
@@ -130,45 +124,65 @@ def build_power_curve(df_scada: pd.DataFrame, bin_width: float = 0.5) -> pd.Data
              len(curve), bin_width)
     return curve
 
+def apply_power_curve(wind_speeds: np.ndarray, curve: pd.DataFrame) -> np.ndarray:
+    xs = curve["wind_speed_ms"].to_numpy()
+    ys = curve["power_kw_mean"].to_numpy()
+    power = np.interp(wind_speeds, xs, ys, left=0.0, right=ys[-1])
+    power = np.where(wind_speeds >= CUT_OUT_SPEED, 0.0, power)
+    power = np.where(wind_speeds < CUT_IN_SPEED, 0.0, power)
+    return power
 
 # Open-Meteo preparation
 
-def fetch_openmeteo_location(loc: Location,
-                             start: str = ARCHIVE_START,
-                             end: str = ARCHIVE_END) -> pd.DataFrame:
+def build_nl_grid(step_deg: float = GRID_STEP_DEG) -> list[Location]:
+    lats = np.arange(NL_LAT_MIN, NL_LAT_MAX + 1e-9, step_deg)
+    lons = np.arange(NL_LON_MIN, NL_LON_MAX + 1e-9, step_deg)
+    points = [
+        Location(name=f"grid_{lat:.2f}_{lon:.2f}",
+                 lat=round(float(lat), 4),
+                 lon=round(float(lon), 4))
+        for lat in lats for lon in lons
+    ]
+    log.info("Built NL grid: %d points (step %.2f deg, %d x %d)",
+             len(points), step_deg, len(lats), len(lons))
+    return points
 
+def fetch_openmeteo_batch(batch: list[Location]) -> pd.DataFrame:
     url = "https://archive-api.open-meteo.com/v1/archive"
     params = {
-        "latitude":   loc.lat,
-        "longitude":  loc.lon,
-        "start_date": start,
-        "end_date":   end,
-        "hourly":     "wind_speed_100m,wind_direction_100m",
+        "latitude":        ",".join(f"{p.lat}" for p in batch),
+        "longitude":       ",".join(f"{p.lon}" for p in batch),
+        "current":         "wind_speed_100m,wind_direction_100m",
         "wind_speed_unit": "ms",
         "timezone":   "UTC",
     }
-    log.info("Querying Open-Meteo for %s ...", loc.name)
+    log.info("Querying Open-Meteo for %s ...", len(batch))
     r = requests.get(url, params=params, timeout=60)
     r.raise_for_status()
-    j = r.json()
+    payload = r.json()
 
-    df = pd.DataFrame({
-        "timestamp":           pd.to_datetime(j["hourly"]["time"]),
-        "wind_speed_100m_ms":  j["hourly"]["wind_speed_100m"],
-        "wind_direction_100m": j["hourly"]["wind_direction_100m"],
-    })
-    df["location"] = loc.name
-    df["lat"] = loc.lat
-    df["lon"] = loc.lon
-    return df
+    if isinstance(payload, dict):
+        payload = [payload]
+
+    rows = []
+    for point, resp in zip(batch, payload):
+        cur = resp.get("current", {})
+        rows.append({
+            "lat":                  point.lat,
+            "lon":                  point.lon,
+            "queried_at_utc":       cur.get("time"),
+            "wind_speed_100m_ms":   cur.get("wind_speed_100m"),
+            "wind_direction_100m":  cur.get("wind_direction_100m"),
+        })
+    return pd.DataFrame(rows)
 
 
-def fetch_openmeteo_all(locations: list[Location]) -> pd.DataFrame:
-
-    frames = [fetch_openmeteo_location(loc) for loc in locations]
+def fetch_openmeteo_all(points: list[Location]) -> pd.DataFrame:
+    frames = []
+    for i in range(0, len(points), BATCH_SIZE):
+        frames.append(fetch_openmeteo_batch(points[i:i + BATCH_SIZE]))
     df = pd.concat(frames, ignore_index=True)
-    log.info("Open-Meteo combined: %d rows across %d locations",
-             len(df), len(locations))
+    log.info("Open-Meteo combined: %d grid rows", len(df))
     return df
 
 
@@ -178,16 +192,11 @@ def clean_openmeteo(df: pd.DataFrame) -> pd.DataFrame:
     n_before = len(df)
 
     # Drop duplicate (location, timestamp) pairs if any
-    df = df.drop_duplicates(subset=["location", "timestamp"])
+    df = df.drop_duplicates(subset=["lat", "lon"])
 
-    # Missing-value report (per location)
-    na_report = df.groupby("location")["wind_speed_100m_ms"].apply(
-        lambda s: s.isna().mean() * 100
-    )
-    for loc, pct in na_report.items():
-        if pct > 0:
-            log.warning("  %s: %.2f%% missing wind speed", loc, pct)
-
+    n_missing = df["wind_speed_100m_ms"].isna().sum()
+    if n_missing:
+        log.warning("Dropping %d grid points with missing wind speed", n_missing)
     df = df.dropna(subset=["wind_speed_100m_ms"])
 
     #wind speeds beyond 50 m/s at 100 m are reanalysis errors
@@ -198,27 +207,21 @@ def clean_openmeteo(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def location_features(df: pd.DataFrame) -> pd.DataFrame:
-
-    g = df.groupby("location")
-    feats = pd.DataFrame({
-        "lat":              g["lat"].first(),
-        "lon":              g["lon"].first(),
-        "mean_wind_ms":     g["wind_speed_100m_ms"].mean(),
-        "median_wind_ms":   g["wind_speed_100m_ms"].median(),
-        "std_wind_ms":      g["wind_speed_100m_ms"].std(),
-        "p90_wind_ms":      g["wind_speed_100m_ms"].quantile(0.90),
-        "pct_hours_in_operating_range":
-            g["wind_speed_100m_ms"].apply(
-                lambda s: ((s >= CUT_IN_SPEED) & (s <= CUT_OUT_SPEED)).mean() * 100
-            ),
-        "pct_hours_calm":   g["wind_speed_100m_ms"].apply(
-            lambda s: (s < CUT_IN_SPEED).mean() * 100
-        ),
-        "n_hours":          g["wind_speed_100m_ms"].count(),
-    }).reset_index()
-    log.info("Built per-location features for %d locations", len(feats))
-    return feats
+def grid_features(df: pd.DataFrame, power_curve: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["expected_power_kw"] = apply_power_curve(
+        df["wind_speed_100m_ms"].to_numpy(), power_curve
+    )
+    df["in_operating_range"] = (
+        (df["wind_speed_100m_ms"] >= CUT_IN_SPEED) &
+        (df["wind_speed_100m_ms"] <= CUT_OUT_SPEED)
+    )
+    log.info("Built grid features for %d points", len(df))
+    return df[[
+        "lat", "lon", "queried_at_utc",
+        "wind_speed_100m_ms", "wind_direction_100m",
+        "expected_power_kw", "in_operating_range",
+    ]]
 
 
 # Minimal MVP visualisations
@@ -243,21 +246,38 @@ def plot_power_curve(curve: pd.DataFrame) -> None:
     log.info("Saved figure: power_curve.png")
 
 
-def plot_location_mean_wind(feats: pd.DataFrame) -> None:
-    fig, ax = plt.subplots(figsize=(9, 5))
-    order = feats.sort_values("mean_wind_ms", ascending=False)
-    ax.bar(order["location"], order["mean_wind_ms"])
-    ax.set_ylabel("Mean wind speed at 100 m (m/s)")
-    ax.set_title(f"Mean wind speed by Dutch location "
-                 f"({ARCHIVE_START} → {ARCHIVE_END})")
-    plt.xticks(rotation=30, ha="right")
-    ax.grid(True, axis="y", alpha=0.3)
+def plot_grid_wind(feats: pd.DataFrame) -> None:
+    fig, ax = plt.subplots(figsize=(8, 7))
+    sc = ax.scatter(feats["lon"], feats["lat"],
+                    c=feats["wind_speed_100m_ms"],
+                    cmap="viridis", s=60, marker="s")
+    plt.colorbar(sc, ax=ax, label="Wind speed at 100 m (m/s)")
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.set_title("Current wind speed across NL grid")
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(FIG_DIR / "location_mean_wind.png", dpi=120)
+    fig.savefig(FIG_DIR / "grid_wind_map.png", dpi=120)
     plt.close(fig)
-    log.info("Saved figure: location_mean_wind.png")
+    log.info("Saved figure: grid_wind_map.png")
 
 
+def plot_grid_power(feats: pd.DataFrame) -> None:
+    fig, ax = plt.subplots(figsize=(8, 7))
+    sc = ax.scatter(feats["lon"], feats["lat"],
+                    c=feats["expected_power_kw"],
+                    cmap="plasma", s=60, marker="s")
+    plt.colorbar(sc, ax=ax, label="Expected power (kW)")
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.set_title("Expected turbine power across NL grid (SCADA curve)")
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(FIG_DIR / "grid_power_map.png", dpi=120)
+    plt.close(fig)
+    log.info("Saved figure: grid_power_map.png")
 
 # Pipeline entry point
 
@@ -274,13 +294,16 @@ def run_pipeline() -> None:
     plot_power_curve(power_curve)
 
     # ---- Open-Meteo branch ------------------------------------------------
-    om_raw = fetch_openmeteo_all(DUTCH_LOCATIONS)
+    grid_points = build_nl_grid()
+    om_raw = fetch_openmeteo_all(grid_points)
     om_raw.to_csv(PROC_DIR / "openmeteo_raw.csv", index=False)
 
     om_clean = clean_openmeteo(om_raw)
-    feats = location_features(om_clean)
-    feats.to_csv(PROC_DIR / "openmeteo_location_features.csv", index=False)
-    plot_location_mean_wind(feats)
+    feats = grid_features(om_clean, power_curve)
+    feats.to_csv(PROC_DIR / "grid_wind.csv", index=False)
+
+    plot_grid_wind(feats)
+    plot_grid_power(feats)
 
     log.info("=== Pipeline finished. Outputs in %s ===", PROC_DIR.resolve())
 
