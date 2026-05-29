@@ -148,7 +148,7 @@ def build_nl_grid(step_deg: float = GRID_STEP_DEG) -> list[Location]:
     return points
 
 def fetch_openmeteo_batch(batch: list[Location]) -> pd.DataFrame:
-    url = "https://archive-api.open-meteo.com/v1/archive"
+    url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude":        ",".join(f"{p.lat}" for p in batch),
         "longitude":       ",".join(f"{p.lon}" for p in batch),
