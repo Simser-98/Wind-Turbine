@@ -29,6 +29,11 @@ async def root():
 
     documents = [
         {
+            "_id": "doc_1",
+            "location": {"type": "Point", "coordinates": [4.746094, 52.217704]},
+            "expectedPowerOutput": 19.63,
+        },
+        {
             "_id": "doc_2",
             "location": {"type": "Point", "coordinates": [4.367875, 52.001839]},
             "expectedPowerOutput": 97.47,
@@ -147,11 +152,6 @@ async def root():
             "_id": "doc_25",
             "location": {"type": "Point", "coordinates": [5.314636, 51.920556]},
             "expectedPowerOutput": 81.27,
-        },
-        {
-            "_id": "doc_26",
-            "location": {"type": "Point", "coordinates": [4.746094, 52.217704]},
-            "expectedPowerOutput": 19.63,
         },
     ]
 
