@@ -61,7 +61,7 @@ def get_model_predictions():
                 "type": "Point",
                 "coordinates": [float(row["lon"]), float(row["lat"])]
             },
-            "expected_power_output": float(row["predicted_power"])
+            "expectedPowerOutput": float(row["predicted_power"])
         }
         documents.append(doc)
         return documents
