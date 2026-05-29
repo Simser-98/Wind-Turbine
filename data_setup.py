@@ -4,74 +4,71 @@ import numpy as np
 from pymongo import MongoClient
 from pathlib import Path
 
-# config
-MODEL_PATH = Path("model.pkl")
-CSV_PATH = Path("grid_wind.csv")
 
-MONGO_URI = "mongodb+srv://25063650_db_user:XGdYP3lhKzlkL9hw@cluster0.em5nnq4.mongodb.net/?appName=Cluster0"
-DB_NAME = "wind_db"
-COLLECTION_NAME = "predictions"
+def get_model_predictions():
+    # config
+    MODEL_PATH = Path("model.pkl")
+    CSV_PATH = Path("grid_wind.csv")
 
-# load ML model
-with open(MODEL_PATH, "rb") as f:
-    model = pickle.load(f)
+    MONGO_URI = "mongodb+srv://25063650_db_user:XGdYP3lhKzlkL9hw@cluster0.em5nnq4.mongodb.net/?appName=Cluster0"
+    DB_NAME = "wind_db"
+    COLLECTION_NAME = "predictions"
 
-print("Model loaded")
+    # load ML model
+    with open(MODEL_PATH, "rb") as f:
+        model = pickle.load(f)
 
-# load gid map of netherlands
-df = pd.read_csv(CSV_PATH)
+    print("Model loaded")
 
-print(f"Loaded {len(df)} rows")
+    # load gid map of netherlands
+    df = pd.read_csv(CSV_PATH)
 
-
-# Convert direction to radians
-df["dir_rad"] = np.deg2rad(df["wind_direction_100m"])
-
-df["dir_sin"] = np.sin(df["dir_rad"])
-df["dir_cos"] = np.cos(df["dir_rad"])
-
-# wind_power_density
-df["wind_power_density"] = df["wind_speed_100m_ms"] ** 3
+    print(f"Loaded {len(df)} rows")
 
 
-X = df[[
-    "wind_speed_100m_ms",
-    "dir_sin",
-    "dir_cos",
-    "wind_power_density"
-]].copy()
+    # Convert direction to radians
+    df["dir_rad"] = np.deg2rad(df["wind_direction_100m"])
 
-# rename column to match training exactly
-X = X.rename(columns={
-    "wind_speed_100m_ms": "wind_speed_ms"
-})
+    df["dir_sin"] = np.sin(df["dir_rad"])
+    df["dir_cos"] = np.cos(df["dir_rad"])
 
-# run prediction model
-predictions = model.predict(X)
+    # wind_power_density
+    df["wind_power_density"] = df["wind_speed_100m_ms"] ** 3
 
-df["predicted_power"] = predictions
 
-print("Predictions generated")
+    X = df[[
+        "wind_speed_100m_ms",
+        "dir_sin",
+        "dir_cos",
+        "wind_power_density"
+    ]].copy()
 
-# insert data into mongo db
-client = MongoClient(MONGO_URI)
-db = client[DB_NAME]
-collection = db[COLLECTION_NAME]
+    # rename column to match training exactly
+    X = X.rename(columns={
+        "wind_speed_100m_ms": "wind_speed_ms"
+    })
 
-documents = []
+    # run prediction model
+    predictions = model.predict(X)
 
-for _, row in df.iterrows():
-    doc = {
-        "location": {
-            "type": "Point",
-            "coordinates": [float(row["lon"]), float(row["lat"])]
-        },
-        "expected_power_output": float(row["predicted_power"])
-    }
-    documents.append(doc)
+    df["predicted_power"] = predictions
 
-# Insert
-if documents:
-    collection.insert_many(documents)
+    print("Predictions generated")
 
-print(f"Inserted {len(documents)} documents into MongoDB")
+    # insert data into mongo db
+    client = MongoClient(MONGO_URI)
+    db = client[DB_NAME]
+    collection = db[COLLECTION_NAME]
+
+    documents = []
+
+    for _, row in df.iterrows():
+        doc = {
+            "location": {
+                "type": "Point",
+                "coordinates": [float(row["lon"]), float(row["lat"])]
+            },
+            "expected_power_output": float(row["predicted_power"])
+        }
+        documents.append(doc)
+        return documents
