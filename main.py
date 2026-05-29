@@ -8,7 +8,7 @@ from pathlib import Path
 MODEL_PATH = Path("model.pkl")
 CSV_PATH = Path("grid_wind.csv")
 
-MONGO_URI = "mongodb+srv://25063650_db_user:XGdYP3lhKzlkL9hw@cluster0.em5nnq4.mongodb.net/?appName=Cluster0"
+
 DB_NAME = "wind_db"
 COLLECTION_NAME = "predictions"
 
