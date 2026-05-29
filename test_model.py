@@ -5,7 +5,7 @@ import numpy as np
 import requests
 
 # Load trained model
-model_path = Path("data/processed/model.pkl")
+model_path = Path("model.pkl")
 
 with open(model_path, "rb") as f:
     model = pickle.load(f)
