@@ -10,9 +10,6 @@ def get_model_predictions():
     MODEL_PATH = Path("model.pkl")
     CSV_PATH = Path("grid_wind.csv")
 
-    MONGO_URI = "mongodb+srv://25063650_db_user:XGdYP3lhKzlkL9hw@cluster0.em5nnq4.mongodb.net/?appName=Cluster0"
-    DB_NAME = "wind_db"
-    COLLECTION_NAME = "predictions"
 
     # load ML model
     with open(MODEL_PATH, "rb") as f:
@@ -55,10 +52,6 @@ def get_model_predictions():
 
     print("Predictions generated")
 
-    # insert data into mongo db
-    client = MongoClient(MONGO_URI)
-    db = client[DB_NAME]
-    collection = db[COLLECTION_NAME]
 
     documents = []
 
