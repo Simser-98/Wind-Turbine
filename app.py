@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import contextily
 import dotenv
 import numpy as np
-import pyproj
+import scipy.interpolate
 from fastapi import FastAPI, Response
 from geojson_pydantic import Point
 from matplotlib import pyplot as plt
@@ -74,27 +74,40 @@ async def interpolated_prediction(location: Point) -> Prediction: ...
 async def map() -> DiagramResponse:
     predictions = await get_all_predictions()
 
-    lngs = np.array([prediction.location.coordinates[0] for prediction in predictions])
-    lats = np.array([prediction.location.coordinates[1] for prediction in predictions])
+    coords = np.array([prediction.location.coordinates for prediction in predictions])
+    lngs = coords[:, 0]
+    lats = coords[:, 1]
     expected_power_outputs = np.array(
         [prediction.expected_power_output for prediction in predictions]
     )
-
-    projection_transformer = pyproj.Transformer.from_crs(
-        "EPSG:4326", "EPSG:3857", always_xy=True
-    )
-    x_coordinates, y_coordinates = projection_transformer.transform(lngs, lats)
 
     figure, axes = plt.subplots(
         figsize=FIGURE_SIZE, dpi=FIGURE_DPI, layout="compressed"
     )
     axes.set_axis_off()
 
-    scatter = axes.scatter(x_coordinates, y_coordinates, c=expected_power_outputs)
+    grid_x, grid_y = np.meshgrid(
+        np.linspace(lngs.min(), lngs.max()),
+        np.linspace(lats.min(), lats.max()),
+    )
+    grid_z = scipy.interpolate.griddata(
+        (lngs, lats),
+        expected_power_outputs,
+        (grid_x, grid_y),
+        method="cubic",
+    )
+    heatmap = axes.imshow(
+        grid_z,
+        aspect="auto",
+        alpha=0.6,
+        origin="lower",
+        extent=(lngs.min(), lngs.max(), lats.min(), lats.max()),
+        zorder=1,
+    )
 
-    contextily.add_basemap(axes)
+    contextily.add_basemap(axes, crs="EPSG:4326")
 
-    color_bar = figure.colorbar(scatter)
+    color_bar = figure.colorbar(heatmap)
     color_bar.set_label("Predicted Power Output [KW]")
 
     output_buffer = io.BytesIO()
