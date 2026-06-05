@@ -22,6 +22,10 @@ MONGO_COLLECTION = os.environ["MONGO_COLLECTION"]
 
 
 class Mongo:
+    """
+    Wrapper class for the MongoDB client.
+    """
+
     client: AsyncMongoClient
 
 
@@ -30,8 +34,10 @@ mongo = Mongo()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    Controls the lifespan of the MongoDB client based on the state of the API.
+    """
     mongo.client = AsyncMongoClient(MONGO_URI)
-
     yield
 
     await mongo.client.close()
@@ -41,15 +47,32 @@ app = FastAPI(lifespan=lifespan)
 
 
 class Prediction(BaseModel):
+    """
+    Prediction of wind turbine power generation at specific location.
+    """
+
     location: Point
     expected_power_output: float = Field(alias="expectedPowerOutput")
 
 
 class DiagramResponse(Response):
+    """
+    Diagram API response in SVG format.
+    """
+
     media_type = "image/svg+xml"
 
 
 async def get_nearest_prediction(location: Point) -> Prediction:
+    """
+    Query MongoDB for the nearest prediction to a given geographic location.
+
+    Args:
+        location: GeoJSON Point specifying target coordinates (lng, lat).
+
+    Returns:
+        Nearest wind turbine power prediction record in the collection.
+    """
     result = await mongo.client[MONGO_DB][MONGO_COLLECTION].find_one(
         {"location": {"$near": {"$geometry": location.model_dump()}}}
     )
@@ -57,21 +80,36 @@ async def get_nearest_prediction(location: Point) -> Prediction:
 
 
 async def get_all_predictions() -> list[Prediction]:
+    """
+    Retrieve all prediction documents from the MongoDB collection.
+
+    Returns:
+        All wind turbine power prediction records in the collection.
+    """
     results = await mongo.client[MONGO_DB][MONGO_COLLECTION].find().to_list()
     return [Prediction.model_validate(result) for result in results]
 
 
 @app.get("/nearest")
-async def nearest_prediction(location: Point) -> Prediction:
-    return await get_nearest_prediction(location)
+async def nearest_prediction(lng: float, lat: float) -> Prediction:
+    """
+    Return the closest prediction in the dataset to the given location.
+    """
+    return await get_nearest_prediction(Point(type="Point", coordinates=[lng, lat]))
 
 
 @app.get("/prediction-interpolated")
-async def interpolated_prediction(location: Point) -> Prediction: ...
+async def interpolated_prediction(lng: float, lat: float) -> Prediction: ...
 
 
-@app.get("/map")
+@app.get("/map", responses={200: {"content": {"image/svg+xml": {}}}})
 async def map() -> DiagramResponse:
+    """
+    Generate and return a heatmap SVG of predicted wind turbine power outputs.
+
+    Fetches all predictions from the database, interpolates them onto a regular
+    grid using cubic interpolation, and overlays the heatmap on a geographic basemap.
+    """
     predictions = await get_all_predictions()
 
     coords = np.array([prediction.location.coordinates for prediction in predictions])
