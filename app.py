@@ -1,6 +1,7 @@
 import io
 import os
 from contextlib import asynccontextmanager
+from typing import cast
 
 import contextily
 import dotenv
@@ -8,6 +9,7 @@ import numpy as np
 import scipy.interpolate
 from fastapi import FastAPI, Response
 from geojson_pydantic import Point
+from geojson_pydantic.types import Position
 from matplotlib import pyplot as plt
 from pydantic import BaseModel, Field
 from pymongo import AsyncMongoClient
@@ -90,12 +92,22 @@ async def get_all_predictions() -> list[Prediction]:
     return [Prediction.model_validate(result) for result in results]
 
 
+@app.get("/health")
+async def health():
+    """
+    Liveness health endpoint.
+    """
+    return {"status": "ok"}
+
+
 @app.get("/nearest")
 async def nearest_prediction(lng: float, lat: float) -> Prediction:
     """
     Return the closest prediction in the dataset to the given location.
     """
-    return await get_nearest_prediction(Point(type="Point", coordinates=[lng, lat]))
+    return await get_nearest_prediction(
+        Point(type="Point", coordinates=cast(Position, [lng, lat]))
+    )
 
 
 @app.get("/prediction-interpolated")
@@ -112,12 +124,12 @@ async def map() -> DiagramResponse:
     """
     predictions = await get_all_predictions()
 
-    lngs, lats, expected_power_outputs = np.transpose(
+    lngs, lats, expected_power_outputs = np.array(
         [
             (*prediction.location.coordinates, prediction.expected_power_output)
             for prediction in predictions
         ]
-    )
+    ).T
 
     figure, axes = plt.subplots(
         figsize=FIGURE_SIZE, dpi=FIGURE_DPI, layout="compressed"
