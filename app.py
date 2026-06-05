@@ -112,11 +112,11 @@ async def map() -> DiagramResponse:
     """
     predictions = await get_all_predictions()
 
-    coords = np.array([prediction.location.coordinates for prediction in predictions])
-    lngs = coords[:, 0]
-    lats = coords[:, 1]
-    expected_power_outputs = np.array(
-        [prediction.expected_power_output for prediction in predictions]
+    lngs, lats, expected_power_outputs = np.transpose(
+        [
+            (*prediction.location.coordinates, prediction.expected_power_output)
+            for prediction in predictions
+        ]
     )
 
     figure, axes = plt.subplots(
