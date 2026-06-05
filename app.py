@@ -95,7 +95,7 @@ async def map() -> DiagramResponse:
     contextily.add_basemap(axes)
 
     color_bar = figure.colorbar(scatter)
-    color_bar.set_label("Power Output [KW]")
+    color_bar.set_label("Predicted Power Output [KW]")
 
     output_buffer = io.BytesIO()
     figure.savefig(output_buffer, format="svg")
