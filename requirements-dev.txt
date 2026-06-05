@@ -1,0 +1,2 @@
+awsebcli==3.27.2
+python-dotenv==1.2.2
