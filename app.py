@@ -102,10 +102,10 @@ async def get_all_predictions() -> list[Prediction]:
     return [Prediction.model_validate(result) for result in results]
 
 
-@app.get("/health")
-async def health():
+@app.get("/live")
+async def liveness():
     """
-    Liveness health endpoint.
+    Liveness endpoint.
     """
     return {"status": "ok"}
 
