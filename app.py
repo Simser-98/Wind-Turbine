@@ -3,8 +3,8 @@ import os
 from contextlib import asynccontextmanager
 from typing import cast
 
+import aiocache
 import contextily
-import dotenv
 import numpy as np
 import scipy.interpolate
 from fastapi import FastAPI, Response
@@ -17,7 +17,12 @@ from pymongo import AsyncMongoClient
 FIGURE_SIZE: tuple[int, int] = (12, 10)
 FIGURE_DPI: int = 150
 
-dotenv.load_dotenv()
+try:
+    import dotenv
+
+    dotenv.load_dotenv()
+except ImportError:
+    pass
 MONGO_URI = os.environ["MONGO_URI"]
 MONGO_DB = os.environ["MONGO_DB"]
 MONGO_COLLECTION = os.environ["MONGO_COLLECTION"]
@@ -40,6 +45,9 @@ async def lifespan(app: FastAPI):
     Controls the lifespan of the MongoDB client based on the state of the API.
     """
     mongo.client = AsyncMongoClient(MONGO_URI)
+    await mongo.client[MONGO_DB][MONGO_COLLECTION].create_index(
+        {"location": "2dsphere"}
+    )
     yield
 
     await mongo.client.close()
@@ -65,6 +73,7 @@ class DiagramResponse(Response):
     media_type = "image/svg+xml"
 
 
+@aiocache.cached(120)
 async def get_nearest_prediction(location: Point) -> Prediction:
     """
     Query MongoDB for the nearest prediction to a given geographic location.
@@ -81,6 +90,7 @@ async def get_nearest_prediction(location: Point) -> Prediction:
     return Prediction.model_validate(result)
 
 
+@aiocache.cached(120)
 async def get_all_predictions() -> list[Prediction]:
     """
     Retrieve all prediction documents from the MongoDB collection.
