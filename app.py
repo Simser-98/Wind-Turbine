@@ -1,13 +1,13 @@
 import io
 import os
 from contextlib import asynccontextmanager
-from typing import cast
+from typing import Annotated, cast
 
 import aiocache
 import contextily
 import numpy as np
 import scipy.interpolate
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Query, Response
 from geojson_pydantic import Point
 from geojson_pydantic.types import Position
 from matplotlib import pyplot as plt
@@ -54,6 +54,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+Longitude = Annotated[float, Query(ge=-90, le=90)]
+Latitude = Annotated[float, Query(ge=-180, le=180)]
 
 
 class Prediction(BaseModel):
@@ -111,7 +114,7 @@ async def liveness():
 
 
 @app.get("/nearest")
-async def nearest_prediction(lng: float, lat: float) -> Prediction:
+async def nearest_prediction(lng: Longitude, lat: Latitude) -> Prediction:
     """
     Return the closest prediction in the dataset to the given location.
     """
@@ -121,7 +124,7 @@ async def nearest_prediction(lng: float, lat: float) -> Prediction:
 
 
 @app.get("/prediction-interpolated")
-async def interpolated_prediction(lng: float, lat: float) -> Prediction: ...
+async def interpolated_prediction(lng: Longitude, lat: Latitude) -> Prediction: ...
 
 
 @app.get("/map", responses={200: {"content": {"image/svg+xml": {}}}})
