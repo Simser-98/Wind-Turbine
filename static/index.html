@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Wind Turbine Suitability Map</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <h1>Wind Turbine Suitability Map</h1>
+
+    <p>
+        This map displays predicted wind turbine power output for different locations.
+        The colors represent relative suitability based on the expected power output.
+    </p>
+
+    <div id="map"></div>
+
+    <div class="legend">
+        <p><span class="low"></span> Low predicted output</p>
+        <p><span class="medium"></span> Medium predicted output</p>
+        <p><span class="high"></span> High predicted output</p>
+    </div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="/static/map.js"></script>
+</body>
+</html>

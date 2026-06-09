@@ -1,0 +1,39 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+}
+
+h1 {
+    margin-bottom: 5px;
+}
+
+#map {
+    height: 650px;
+    width: 100%;
+    border: 1px solid #ccc;
+    margin-top: 20px;
+}
+
+.legend {
+    margin-top: 15px;
+    font-size: 14px;
+}
+
+.legend span {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-right: 8px;
+}
+
+.low {
+    background-color: red;
+}
+
+.medium {
+    background-color: orange;
+}
+
+.high {
+    background-color: green;
+}
