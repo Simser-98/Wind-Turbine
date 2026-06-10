@@ -1,7 +1,7 @@
 import io
 import os
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Optional
 
 import aiocache
 import contextily
@@ -11,6 +11,7 @@ from fastapi import FastAPI, Query, Response
 from geojson_pydantic import Point, Polygon
 from geojson_pydantic.types import Position2D
 from matplotlib import pyplot as plt
+from numpy import dtype, float64, ndarray
 from pydantic import BaseModel, Field
 from pymongo import AsyncMongoClient
 
@@ -70,25 +71,33 @@ async def get_nearest_prediction(location: Point) -> Prediction:
 
 
 @aiocache.cached(120)
+async def get_nearest_predictions(
+    location: Point, count: Optional[int] = None
+) -> list[Prediction]:
+    query = mongo.client[MONGO_DB][MONGO_COLLECTION].find(
+        {"location": {"$near": {"$geometry": location.model_dump()}}}
+    )
+
+    if count is not None:
+        query.limit(count)
+
+    results = await query.to_list()
+
+    return [Prediction.model_validate(result) for result in results]
+
+
+@aiocache.cached(120)
 async def get_all_predictions() -> list[Prediction]:
     results = await mongo.client[MONGO_DB][MONGO_COLLECTION].find().to_list()
     return [Prediction.model_validate(result) for result in results]
 
 
-@app.get("/live")
-async def live() -> None:
-    return
-
-
-@app.get("/map", response_class=DiagramResponse)
-async def map_get() -> DiagramResponse:
-    predictions = await get_all_predictions()
-
+def generate_heatmap(predictions: list[Prediction]) -> DiagramResponse:
+    lngs: ndarray[tuple[int], dtype[float64]]
+    lats: ndarray[tuple[int], dtype[float64]]
+    expected_power_outputs: ndarray[tuple[int], dtype[float64]]
     lngs, lats, expected_power_outputs = np.transpose(
-        [
-            (*prediction.location.coordinates, prediction.expected_power_output)
-            for prediction in predictions
-        ]
+        [(*p.location.coordinates, p.expected_power_output) for p in predictions]
     )
 
     figure, axes = plt.subplots(
@@ -96,16 +105,17 @@ async def map_get() -> DiagramResponse:
     )
     axes.set_axis_off()
 
+    grid_x: ndarray[tuple[int], dtype[float64]]
+    grid_y: ndarray[tuple[int], dtype[float64]]
+    grid_z: ndarray[tuple[int, int], dtype[float64]]
     grid_x, grid_y = np.meshgrid(
         np.linspace(lngs.min(), lngs.max()),
         np.linspace(lats.min(), lats.max()),
     )
     grid_z = scipy.interpolate.griddata(
-        (lngs, lats),
-        expected_power_outputs,
-        (grid_x, grid_y),
-        method="cubic",
+        (lngs, lats), expected_power_outputs, (grid_x, grid_y)
     )
+
     heatmap = axes.imshow(
         grid_z,
         aspect="auto",
@@ -128,12 +138,30 @@ async def map_get() -> DiagramResponse:
     return DiagramResponse(output_buffer.getbuffer())
 
 
+@app.get("/live")
+async def live() -> None:
+    return
+
+
+@app.get("/map", response_class=DiagramResponse)
+async def map_get() -> DiagramResponse:
+    predictions = await get_all_predictions()
+    return generate_heatmap(predictions)
+
+
 @app.post("/map", response_class=DiagramResponse)
-async def map_post(polygon: Polygon) -> DiagramResponse: ...
+async def map_post(polygon: Polygon) -> DiagramResponse:
+    results = (
+        await mongo.client[MONGO_DB][MONGO_COLLECTION]
+        .find({"location": {"$geoWithin": {"$geometry": polygon.model_dump()}}})
+        .to_list()
+    )
+    predictions = [Prediction.model_validate(result) for result in results]
+    return generate_heatmap(predictions)
 
 
-@app.get("/closest")
-async def closest(lng: Longitude, lat: Latitude) -> Prediction:
+@app.get("/nearest")
+async def nearest(lng: Longitude, lat: Latitude) -> Prediction:
     return await get_nearest_prediction(
         Point(type="Point", coordinates=Position2D(longitude=lng, latitude=lat))
     )
