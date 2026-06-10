@@ -7,7 +7,7 @@ import aiocache
 import contextily
 import numpy as np
 import scipy.interpolate
-from fastapi import FastAPI, Query, Response
+from fastapi import APIRouter, FastAPI, Query, Response
 from geojson_pydantic import Point, Polygon
 from geojson_pydantic.types import Position2D
 from matplotlib import pyplot as plt
@@ -48,6 +48,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+router = APIRouter(prefix="/api/v1")
+app.include_router(router)
 
 Longitude = Annotated[float, Query(ge=-90, le=90)]
 Latitude = Annotated[float, Query(ge=-180, le=180)]
@@ -138,18 +140,18 @@ def generate_heatmap(predictions: list[Prediction]) -> DiagramResponse:
     return DiagramResponse(output_buffer.getbuffer())
 
 
-@app.get("/live")
+@router.get("/live")
 async def live() -> None:
     return
 
 
-@app.get("/map", response_class=DiagramResponse)
+@router.get("/map", response_class=DiagramResponse)
 async def map_get() -> DiagramResponse:
     predictions = await get_all_predictions()
     return generate_heatmap(predictions)
 
 
-@app.post("/map", response_class=DiagramResponse)
+@router.post("/map", response_class=DiagramResponse)
 async def map_post(polygon: Polygon) -> DiagramResponse:
     results = (
         await mongo.client[MONGO_DB][MONGO_COLLECTION]
@@ -160,12 +162,12 @@ async def map_post(polygon: Polygon) -> DiagramResponse:
     return generate_heatmap(predictions)
 
 
-@app.get("/nearest")
+@router.get("/nearest")
 async def nearest(lng: Longitude, lat: Latitude) -> Prediction:
     return await get_nearest_prediction(
         Point(type="Point", coordinates=Position2D(longitude=lng, latitude=lat))
     )
 
 
-@app.get("/interpolated")
+@router.get("/interpolated")
 async def interpolated(lng: Longitude, lat: Latitude) -> Prediction: ...
