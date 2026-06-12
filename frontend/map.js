@@ -5,6 +5,8 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: "© OpenStreetMap contributors"
 }).addTo(map);
 
+const API_URL = "/api/v1/predictions";
+
 function getColor(power, lowThreshold, highThreshold) {
     if (power < lowThreshold) {
         return "red";
@@ -17,7 +19,7 @@ function getColor(power, lowThreshold, highThreshold) {
 
 async function loadPredictions() {
     try {
-        const response = await fetch("/predictions");
+        const response = await fetch(API_URL);
 
         if (!response.ok) {
             throw new Error("Failed to fetch predictions from API");
