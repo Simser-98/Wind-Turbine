@@ -109,13 +109,14 @@ def build_power_curve(df_scada: pd.DataFrame, bin_width: float = 0.5) -> pd.Data
 
     curve = (
         df.groupby("wind_speed_bin", observed=True)["active_power_kw"]
-          .agg(["mean", "std", "count"])
+          .agg(["mean", "median", "std", "count"])
           .reset_index()
     )
     # Use the left edge of each bin as the representative wind speed
     curve["wind_speed_ms"] = curve["wind_speed_bin"].apply(lambda b: b.left).astype(float)
-    curve = curve[["wind_speed_ms", "mean", "std", "count"]]
+    curve = curve[["wind_speed_ms", "mean", "median", "std", "count"]]
     curve = curve.rename(columns={"mean": "power_kw_mean",
+                                  "median": "power_kw_median",
                                   "std":  "power_kw_std"})
     # Keep bins with enough samples for stable averages
     curve = curve[curve["count"] >= 20].reset_index(drop=True)
@@ -131,6 +132,24 @@ def apply_power_curve(wind_speeds: np.ndarray, curve: pd.DataFrame) -> np.ndarra
     power = np.where(wind_speeds >= CUT_OUT_SPEED, 0.0, power)
     power = np.where(wind_speeds < CUT_IN_SPEED, 0.0, power)
     return power
+
+# 0 handling (flagging + filtering)
+
+def flag_nonoperational(df: pd.DataFrame, min_ratio: float = 0.10) -> pd.Series:
+    in_range = df["wind_speed_ms"].between(CUT_IN_SPEED, CUT_OUT_SPEED)
+    expecting_power = in_range & (df["theoretical_power_kw"] > 0)
+    underperforming = df["active_power_kw"] < min_ratio * df["theoretical_power_kw"]
+    return expecting_power & underperforming
+
+
+def filter_nonoperational(df: pd.DataFrame, min_ratio: float = 0.10) -> pd.DataFrame:
+    df = df.copy()
+    mask = flag_nonoperational(df, min_ratio)
+    log.info(
+        "Non-operational rows dropped: %d / %d (%.1f%%)",
+        int(mask.sum()), len(df), 100 * mask.mean(),
+    )
+    return df[~mask].reset_index(drop=True)
 
 # Open-Meteo preparation
 
@@ -231,6 +250,8 @@ def plot_power_curve(curve: pd.DataFrame) -> None:
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.plot(curve["wind_speed_ms"], curve["power_kw_mean"],
             marker="o", linewidth=1.5, label="Empirical mean")
+    ax.plot(curve["wind_speed_ms"], curve["power_kw_median"],
+            marker="x", linewidth=1.0, ls="--", label="Empirical median")
     ax.fill_between(curve["wind_speed_ms"],
                     curve["power_kw_mean"] - curve["power_kw_std"],
                     curve["power_kw_mean"] + curve["power_kw_std"],
@@ -241,10 +262,31 @@ def plot_power_curve(curve: pd.DataFrame) -> None:
     ax.grid(True, alpha=0.3)
     ax.legend()
     fig.tight_layout()
-    fig.savefig(FIG_DIR / "power_curve.png", dpi=120)
+    fig.savefig(FIG_DIR / "power_curve.svg", dpi=120)
     plt.close(fig)
-    log.info("Saved figure: power_curve.png")
+    log.info("Saved figure: power_curve.svg")
 
+def plot_power_scatter(df_clean: pd.DataFrame, min_ratio: float = 0.10) -> None:
+    mask = flag_nonoperational(df_clean, min_ratio)
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.scatter(df_clean.loc[~mask, "wind_speed_ms"],
+               df_clean.loc[~mask, "active_power_kw"],
+               s=4, alpha=0.3, label=f"Kept ({(~mask).sum():,})")
+    ax.scatter(df_clean.loc[mask, "wind_speed_ms"],
+               df_clean.loc[mask, "active_power_kw"],
+               s=4, alpha=0.3, color="crimson",
+               label=f"Dropped \u2014 non-operational ({mask.sum():,})")
+    ax.axvline(CUT_IN_SPEED, ls="--", lw=1, color="gray")
+    ax.axvline(CUT_OUT_SPEED, ls="--", lw=1, color="gray")
+    ax.set_xlabel("Wind speed (m/s)")
+    ax.set_ylabel("Active power (kW)")
+    ax.set_title("SCADA wind\u2013power scatter: operational filtering")
+    ax.legend(markerscale=3)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(FIG_DIR / "power_scatter_filtered.svg", dpi=120)
+    plt.close(fig)
+    log.info("Saved figure: power_scatter_filtered.svg")
 
 def plot_grid_wind(feats: pd.DataFrame) -> None:
     fig, ax = plt.subplots(figsize=(8, 7))
@@ -258,9 +300,9 @@ def plot_grid_wind(feats: pd.DataFrame) -> None:
     ax.set_aspect("equal", adjustable="datalim")
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(FIG_DIR / "grid_wind_map.png", dpi=120)
+    fig.savefig(FIG_DIR / "grid_wind_map.svg", dpi=120)
     plt.close(fig)
-    log.info("Saved figure: grid_wind_map.png")
+    log.info("Saved figure: grid_wind_map.svg")
 
 
 def plot_grid_power(feats: pd.DataFrame) -> None:
@@ -275,37 +317,6 @@ def plot_grid_power(feats: pd.DataFrame) -> None:
     ax.set_aspect("equal", adjustable="datalim")
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(FIG_DIR / "grid_power_map.png", dpi=120)
+    fig.savefig(FIG_DIR / "grid_power_map.svg", dpi=120)
     plt.close(fig)
-    log.info("Saved figure: grid_power_map.png")
-
-# Pipeline entry point
-
-def run_pipeline() -> None:
-    log.info("=== Sprint 1 data preparation pipeline ===")
-
-    # ---- SCADA branch -----------------------------------------------------
-    scada_raw = load_scada(SCADA_CSV)
-    scada = clean_scada(scada_raw)
-    scada.to_csv(PROC_DIR / "scada_clean.csv", index=False)
-
-    power_curve = build_power_curve(scada)
-    power_curve.to_csv(PROC_DIR / "power_curve.csv", index=False)
-    plot_power_curve(power_curve)
-
-    # ---- Open-Meteo branch ------------------------------------------------
-    grid_points = build_nl_grid()
-    om_raw = fetch_openmeteo_all(grid_points)
-    om_raw.to_csv(PROC_DIR / "openmeteo_raw.csv", index=False)
-
-    om_clean = clean_openmeteo(om_raw)
-    feats = grid_features(om_clean, power_curve)
-    feats.to_csv(PROC_DIR / "grid_wind.csv", index=False)
-
-    plot_grid_wind(feats)
-    plot_grid_power(feats)
-
-    log.info("=== Pipeline finished. Outputs in %s ===", PROC_DIR.resolve())
-
-
-run_pipeline()
+    log.info("Saved figure: grid_power_map.svg")
