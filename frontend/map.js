@@ -5,60 +5,89 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: "© OpenStreetMap contributors"
 }).addTo(map);
 
-const API_URL = "/api/v1/predictions";
+// This endpoint does not exist yet.
+// It is the format the frontend expects from the backend.
+const API_URL = "/api/v1/predictions/bbox";
 
-function getColor(power, lowThreshold, highThreshold) {
-    if (power < lowThreshold) {
-        return "red";
-    } else if (power < highThreshold) {
-        return "orange";
-    } else {
+const markersLayer = L.layerGroup().addTo(map);
+const loadedPoints = new Set();
+
+let loadTimeout = null;
+
+function getColor(properties) {
+    const category = properties.suitabilityCategory;
+
+    if (category === "high") {
         return "green";
     }
+
+    if (category === "medium") {
+        return "orange";
+    }
+
+    if (category === "low") {
+        return "red";
+    }
+
+    const score = Number(properties.suitabilityScore);
+
+    if (!isNaN(score)) {
+        if (score >= 0.7) return "green";
+        if (score >= 0.4) return "orange";
+        return "red";
+    }
+
+    const power = Number(properties.expectedPowerOutput);
+
+    if (power >= 2000) return "green";
+    if (power >= 1000) return "orange";
+    return "red";
 }
 
-async function loadPredictions() {
+function buildBoundingBoxUrl() {
+    const bounds = map.getBounds();
+
+    const params = new URLSearchParams({
+        west: bounds.getWest(),
+        south: bounds.getSouth(),
+        east: bounds.getEast(),
+        north: bounds.getNorth()
+    });
+
+    return `${API_URL}?${params.toString()}`;
+}
+
+async function loadPredictionsForVisibleArea() {
     try {
-        const response = await fetch(API_URL);
+        const response = await fetch(buildBoundingBoxUrl());
 
         if (!response.ok) {
-            throw new Error("Failed to fetch predictions from API");
+            throw new Error("Failed to fetch prediction data from API");
         }
 
-        const predictions = await response.json();
+        const geojson = await response.json();
 
-        if (!predictions || predictions.length === 0) {
-            console.log("No predictions found.");
-            return;
+        if (geojson.type !== "FeatureCollection" || !Array.isArray(geojson.features)) {
+            throw new Error("Unexpected API response format");
         }
 
-        const powerValues = predictions
-            .map(prediction => Number(
-                prediction.expectedPowerOutput ?? prediction.expected_power_output
-            ))
-            .filter(value => !isNaN(value));
-
-        const sortedPowerValues = [...powerValues].sort((a, b) => a - b);
-
-        const lowThreshold = sortedPowerValues[Math.floor(sortedPowerValues.length * 0.33)];
-        const highThreshold = sortedPowerValues[Math.floor(sortedPowerValues.length * 0.66)];
-
-        predictions.forEach(prediction => {
-            const coordinates = prediction.location.coordinates;
-
-            // GeoJSON uses [longitude, latitude]
-            const longitude = Number(coordinates[0]);
-            const latitude = Number(coordinates[1]);
-
-            const power = Number(
-                prediction.expectedPowerOutput ?? prediction.expected_power_output
-            );
-
-            if (isNaN(latitude) || isNaN(longitude) || isNaN(power)) {
+        geojson.features.forEach(feature => {
+            if (!feature.geometry || feature.geometry.type !== "Point") {
                 return;
             }
 
-            const color = getColor(power, lowThreshold, highThreshold);
+            const [longitude, latitude] = feature.geometry.coordinates;
+            const properties = feature.properties || {};
+
+            const pointId = feature.id || `${longitude},${latitude}`;
+
+            if (loadedPoints.has(pointId)) {
+                return;
+            }
+
+            loadedPoints.add(pointId);
+
+            const color = getColor(properties);
 
             L.circleMarker([latitude, longitude], {
                 radius: 6,
@@ -66,17 +95,26 @@ async function loadPredictions() {
                 fillColor: color,
                 fillOpacity: 0.75
             })
-            .addTo(map)
+            .addTo(markersLayer)
             .bindPopup(`
-                <strong>Predicted Power Output:</strong> ${power.toFixed(2)} KW<br>
+                <strong>Predicted Power Output:</strong> ${properties.expectedPowerOutput ?? "N/A"} KW<br>
+                <strong>Suitability Score:</strong> ${properties.suitabilityScore ?? "N/A"}<br>
+                <strong>Suitability Category:</strong> ${properties.suitabilityCategory ?? "N/A"}<br>
                 <strong>Latitude:</strong> ${latitude}<br>
                 <strong>Longitude:</strong> ${longitude}
             `);
         });
 
     } catch (error) {
-        console.error("Error loading predictions:", error);
+        console.error("Error loading prediction data:", error);
     }
 }
 
-loadPredictions();
+function debounceMapLoad() {
+    clearTimeout(loadTimeout);
+    loadTimeout = setTimeout(loadPredictionsForVisibleArea, 400);
+}
+
+map.on("moveend", debounceMapLoad);
+
+loadPredictionsForVisibleArea();
