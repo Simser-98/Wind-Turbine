@@ -31,12 +31,14 @@ for d in (RAW_DIR, PROC_DIR, FIG_DIR):
 # (Filename on Kaggle: "T1.csv")
 SCADA_CSV = RAW_DIR / "T1.csv"
 
+
 # Small, defensible set of Dutch locations spread across the country.
 @dataclass(frozen=True)
 class Location:
     name: str
     lat: float
     lon: float
+
 
 # Area of the Netherlands
 NL_LAT_MIN, NL_LAT_MAX = 50.75, 53.55
@@ -48,11 +50,12 @@ GRID_STEP_DEG = 0.2
 BATCH_SIZE = 100
 
 # Turbine operating range used as a sanity / feature definition.
-CUT_IN_SPEED  = 3.0   # m/s
+CUT_IN_SPEED = 3.0  # m/s
 CUT_OUT_SPEED = 25.0  # m/s
 
 
 # SCADA preparation
+
 
 def load_scada(path: Path) -> pd.DataFrame:
     if not path.exists():
@@ -61,13 +64,15 @@ def load_scada(path: Path) -> pd.DataFrame:
             f"Download T1.csv from Kaggle and put it in {RAW_DIR}/"
         )
     df = pd.read_csv(path)
-    df = df.rename(columns={
-        "Date/Time":                  "timestamp",
-        "LV ActivePower (kW)":        "active_power_kw",
-        "Wind Speed (m/s)":           "wind_speed_ms",
-        "Theoretical_Power_Curve (KWh)": "theoretical_power_kw",
-        "Wind Direction (°)":         "wind_direction_deg",
-    })
+    df = df.rename(
+        columns={
+            "Date/Time": "timestamp",
+            "LV ActivePower (kW)": "active_power_kw",
+            "Wind Speed (m/s)": "wind_speed_ms",
+            "Theoretical_Power_Curve (KWh)": "theoretical_power_kw",
+            "Wind Direction (°)": "wind_direction_deg",
+        }
+    )
     log.info("SCADA loaded: %d rows, %d columns", *df.shape)
     return df
 
@@ -89,12 +94,20 @@ def clean_scada(df: pd.DataFrame) -> pd.DataFrame:
     # Sanity bounds on wind speed (sensor stuck / fault)
     df = df[(df["wind_speed_ms"] >= 0) & (df["wind_speed_ms"] <= 40)]
 
-    # Negative power -> 0 (documented decision)
-    df["active_power_kw"] = df["active_power_kw"].clip(lower=0)
+    # remove downtime/curtailment
+    CURTAILMENT_TRESHOLD_KW = 50.0
+    downtime_mask = (df["wind_speed_ms"] > CUT_IN_SPEED) & (
+        df["active_power_kw"] < CURTAILMENT_TRESHOLD_KW
+    )
+    n_downtime = downtime_mask.sum()
+    df = df[~downtime_mask]
 
     log.info(
-        "SCADA cleaned: kept %d / %d rows (%.1f%%)",
-        len(df), n_before, 100 * len(df) / n_before,
+        "SCADA cleaned: kept %d / %d rows (%.1f%%), removed %d downtime/curtailment rows",
+        len(df),
+        n_before,
+        100 * len(df) / n_before,
+        n_downtime,
     )
 
     # Drop the Turkish timestamp — explicitly not meaningful for NL context.
@@ -109,20 +122,21 @@ def build_power_curve(df_scada: pd.DataFrame, bin_width: float = 0.5) -> pd.Data
 
     curve = (
         df.groupby("wind_speed_bin", observed=True)["active_power_kw"]
-          .agg(["mean", "std", "count"])
-          .reset_index()
+        .agg(["mean", "std", "count"])
+        .reset_index()
     )
     # Use the left edge of each bin as the representative wind speed
-    curve["wind_speed_ms"] = curve["wind_speed_bin"].apply(lambda b: b.left).astype(float)
+    curve["wind_speed_ms"] = (
+        curve["wind_speed_bin"].apply(lambda b: b.left).astype(float)
+    )
     curve = curve[["wind_speed_ms", "mean", "std", "count"]]
-    curve = curve.rename(columns={"mean": "power_kw_mean",
-                                  "std":  "power_kw_std"})
+    curve = curve.rename(columns={"mean": "power_kw_mean", "std": "power_kw_std"})
     # Keep bins with enough samples for stable averages
     curve = curve[curve["count"] >= 20].reset_index(drop=True)
 
-    log.info("Power curve built: %d wind-speed bins of %.1f m/s",
-             len(curve), bin_width)
+    log.info("Power curve built: %d wind-speed bins of %.1f m/s", len(curve), bin_width)
     return curve
+
 
 def apply_power_curve(wind_speeds: np.ndarray, curve: pd.DataFrame) -> np.ndarray:
     xs = curve["wind_speed_ms"].to_numpy()
@@ -132,29 +146,40 @@ def apply_power_curve(wind_speeds: np.ndarray, curve: pd.DataFrame) -> np.ndarra
     power = np.where(wind_speeds < CUT_IN_SPEED, 0.0, power)
     return power
 
+
 # Open-Meteo preparation
+
 
 def build_nl_grid(step_deg: float = GRID_STEP_DEG) -> list[Location]:
     lats = np.arange(NL_LAT_MIN, NL_LAT_MAX + 1e-9, step_deg)
     lons = np.arange(NL_LON_MIN, NL_LON_MAX + 1e-9, step_deg)
     points = [
-        Location(name=f"grid_{lat:.2f}_{lon:.2f}",
-                 lat=round(float(lat), 4),
-                 lon=round(float(lon), 4))
-        for lat in lats for lon in lons
+        Location(
+            name=f"grid_{lat:.2f}_{lon:.2f}",
+            lat=round(float(lat), 4),
+            lon=round(float(lon), 4),
+        )
+        for lat in lats
+        for lon in lons
     ]
-    log.info("Built NL grid: %d points (step %.2f deg, %d x %d)",
-             len(points), step_deg, len(lats), len(lons))
+    log.info(
+        "Built NL grid: %d points (step %.2f deg, %d x %d)",
+        len(points),
+        step_deg,
+        len(lats),
+        len(lons),
+    )
     return points
+
 
 def fetch_openmeteo_batch(batch: list[Location]) -> pd.DataFrame:
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
-        "latitude":        ",".join(f"{p.lat}" for p in batch),
-        "longitude":       ",".join(f"{p.lon}" for p in batch),
-        "current":         "wind_speed_100m,wind_direction_100m",
+        "latitude": ",".join(f"{p.lat}" for p in batch),
+        "longitude": ",".join(f"{p.lon}" for p in batch),
+        "current": "wind_speed_100m,wind_direction_100m",
         "wind_speed_unit": "ms",
-        "timezone":   "UTC",
+        "timezone": "UTC",
     }
     log.info("Querying Open-Meteo for %s ...", len(batch))
     r = requests.get(url, params=params, timeout=60)
@@ -167,20 +192,22 @@ def fetch_openmeteo_batch(batch: list[Location]) -> pd.DataFrame:
     rows = []
     for point, resp in zip(batch, payload):
         cur = resp.get("current", {})
-        rows.append({
-            "lat":                  point.lat,
-            "lon":                  point.lon,
-            "queried_at_utc":       cur.get("time"),
-            "wind_speed_100m_ms":   cur.get("wind_speed_100m"),
-            "wind_direction_100m":  cur.get("wind_direction_100m"),
-        })
+        rows.append(
+            {
+                "lat": point.lat,
+                "lon": point.lon,
+                "queried_at_utc": cur.get("time"),
+                "wind_speed_100m_ms": cur.get("wind_speed_100m"),
+                "wind_direction_100m": cur.get("wind_direction_100m"),
+            }
+        )
     return pd.DataFrame(rows)
 
 
 def fetch_openmeteo_all(points: list[Location]) -> pd.DataFrame:
     frames = []
     for i in range(0, len(points), BATCH_SIZE):
-        frames.append(fetch_openmeteo_batch(points[i:i + BATCH_SIZE]))
+        frames.append(fetch_openmeteo_batch(points[i : i + BATCH_SIZE]))
     df = pd.concat(frames, ignore_index=True)
     log.info("Open-Meteo combined: %d grid rows", len(df))
     return df
@@ -199,9 +226,8 @@ def clean_openmeteo(df: pd.DataFrame) -> pd.DataFrame:
         log.warning("Dropping %d grid points with missing wind speed", n_missing)
     df = df.dropna(subset=["wind_speed_100m_ms"])
 
-    #wind speeds beyond 50 m/s at 100 m are reanalysis errors
-    df = df[(df["wind_speed_100m_ms"] >= 0) &
-            (df["wind_speed_100m_ms"] <= 50)]
+    # wind speeds beyond 50 m/s at 100 m are reanalysis errors
+    df = df[(df["wind_speed_100m_ms"] >= 0) & (df["wind_speed_100m_ms"] <= 50)]
 
     log.info("Open-Meteo cleaned: kept %d / %d rows", len(df), n_before)
     return df
@@ -212,16 +238,21 @@ def grid_features(df: pd.DataFrame, power_curve: pd.DataFrame) -> pd.DataFrame:
     df["expected_power_kw"] = apply_power_curve(
         df["wind_speed_100m_ms"].to_numpy(), power_curve
     )
-    df["in_operating_range"] = (
-        (df["wind_speed_100m_ms"] >= CUT_IN_SPEED) &
-        (df["wind_speed_100m_ms"] <= CUT_OUT_SPEED)
+    df["in_operating_range"] = (df["wind_speed_100m_ms"] >= CUT_IN_SPEED) & (
+        df["wind_speed_100m_ms"] <= CUT_OUT_SPEED
     )
     log.info("Built grid features for %d points", len(df))
-    return df[[
-        "lat", "lon", "queried_at_utc",
-        "wind_speed_100m_ms", "wind_direction_100m",
-        "expected_power_kw", "in_operating_range",
-    ]]
+    return df[
+        [
+            "lat",
+            "lon",
+            "queried_at_utc",
+            "wind_speed_100m_ms",
+            "wind_direction_100m",
+            "expected_power_kw",
+            "in_operating_range",
+        ]
+    ]
 
 
 # Minimal MVP visualisations
@@ -229,12 +260,20 @@ def grid_features(df: pd.DataFrame, power_curve: pd.DataFrame) -> pd.DataFrame:
 
 def plot_power_curve(curve: pd.DataFrame) -> None:
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(curve["wind_speed_ms"], curve["power_kw_mean"],
-            marker="o", linewidth=1.5, label="Empirical mean")
-    ax.fill_between(curve["wind_speed_ms"],
-                    curve["power_kw_mean"] - curve["power_kw_std"],
-                    curve["power_kw_mean"] + curve["power_kw_std"],
-                    alpha=0.2, label="±1 std")
+    ax.plot(
+        curve["wind_speed_ms"],
+        curve["power_kw_mean"],
+        marker="o",
+        linewidth=1.5,
+        label="Empirical mean",
+    )
+    ax.fill_between(
+        curve["wind_speed_ms"],
+        curve["power_kw_mean"] - curve["power_kw_std"],
+        curve["power_kw_mean"] + curve["power_kw_std"],
+        alpha=0.2,
+        label="±1 std",
+    )
     ax.set_xlabel("Wind speed (m/s)")
     ax.set_ylabel("Active power (kW)")
     ax.set_title("Empirical power curve derived from SCADA data")
@@ -248,9 +287,14 @@ def plot_power_curve(curve: pd.DataFrame) -> None:
 
 def plot_grid_wind(feats: pd.DataFrame) -> None:
     fig, ax = plt.subplots(figsize=(8, 7))
-    sc = ax.scatter(feats["lon"], feats["lat"],
-                    c=feats["wind_speed_100m_ms"],
-                    cmap="viridis", s=60, marker="s")
+    sc = ax.scatter(
+        feats["lon"],
+        feats["lat"],
+        c=feats["wind_speed_100m_ms"],
+        cmap="viridis",
+        s=60,
+        marker="s",
+    )
     plt.colorbar(sc, ax=ax, label="Wind speed at 100 m (m/s)")
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
@@ -265,9 +309,14 @@ def plot_grid_wind(feats: pd.DataFrame) -> None:
 
 def plot_grid_power(feats: pd.DataFrame) -> None:
     fig, ax = plt.subplots(figsize=(8, 7))
-    sc = ax.scatter(feats["lon"], feats["lat"],
-                    c=feats["expected_power_kw"],
-                    cmap="plasma", s=60, marker="s")
+    sc = ax.scatter(
+        feats["lon"],
+        feats["lat"],
+        c=feats["expected_power_kw"],
+        cmap="plasma",
+        s=60,
+        marker="s",
+    )
     plt.colorbar(sc, ax=ax, label="Expected power (kW)")
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
@@ -279,7 +328,9 @@ def plot_grid_power(feats: pd.DataFrame) -> None:
     plt.close(fig)
     log.info("Saved figure: grid_power_map.png")
 
+
 # Pipeline entry point
+
 
 def run_pipeline() -> None:
     log.info("=== Sprint 1 data preparation pipeline ===")
