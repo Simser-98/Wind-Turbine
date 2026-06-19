@@ -15,7 +15,7 @@ const loadedPoints = new Set();
 let loadTimeout = null;
 
 function getColor(properties) {
-    const category = properties.suitabilityCategory;
+    const category = properties.powerCategory;
 
     if (category === "high") {
         return "green";
@@ -29,19 +29,7 @@ function getColor(properties) {
         return "red";
     }
 
-    const score = Number(properties.suitabilityScore);
-
-    if (!isNaN(score)) {
-        if (score >= 0.7) return "green";
-        if (score >= 0.4) return "orange";
-        return "red";
-    }
-
-    const power = Number(properties.expectedPowerOutput);
-
-    if (power >= 2000) return "green";
-    if (power >= 1000) return "orange";
-    return "red";
+    return "gray";
 }
 
 function buildBoundingBoxUrl() {
@@ -98,8 +86,7 @@ async function loadPredictionsForVisibleArea() {
             .addTo(markersLayer)
             .bindPopup(`
                 <strong>Predicted Power Output:</strong> ${properties.expectedPowerOutput ?? "N/A"} KW<br>
-                <strong>Suitability Score:</strong> ${properties.suitabilityScore ?? "N/A"}<br>
-                <strong>Suitability Category:</strong> ${properties.suitabilityCategory ?? "N/A"}<br>
+                <strong>Power Category:</strong> ${properties.powerCategory ?? "N/A"}<br>
                 <strong>Latitude:</strong> ${latitude}<br>
                 <strong>Longitude:</strong> ${longitude}
             `);
