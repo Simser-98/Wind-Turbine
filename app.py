@@ -17,6 +17,7 @@ from pymongo import AsyncMongoClient
 
 FIGURE_SIZE: tuple[int, int] = (12, 10)
 FIGURE_DPI: int = 150
+INTERPOLATION_NEIGHBOR_COUNT: int = 16
 
 try:
     import dotenv
@@ -55,7 +56,7 @@ Latitude = Annotated[float, Query(ge=-90, le=90)]
 
 
 class Prediction(BaseModel):
-    id: Annotated[str, BeforeValidator(str)] = Field(validation_alias="_id")
+    id: Optional[Annotated[str, BeforeValidator(str)]] = Field(validation_alias="_id")
     location: Point
     expected_power_output: float = Field(serialization_alias="expectedPowerOutput")
     power_category: Literal["low"] | Literal["medium"] | Literal["high"] = Field(
@@ -200,7 +201,26 @@ async def nearest(lng: Longitude, lat: Latitude) -> Prediction:
 
 
 @router.get("/interpolated")
-async def interpolated(lng: Longitude, lat: Latitude) -> Prediction: ...
+async def interpolated(lng: Longitude, lat: Latitude) -> Prediction:
+    location = Point(type="Point", coordinates=Position2D(longitude=lng, latitude=lat))
+
+    predictions = await get_nearest_predictions(
+        location, count=INTERPOLATION_NEIGHBOR_COUNT
+    )
+
+    expected_power_output = float(
+        scipy.interpolate.RBFInterpolator(
+            [prediction.location.coordinates for prediction in predictions],
+            [prediction.expected_power_output for prediction in predictions],
+        )([[lng, lat]])[0]
+    )
+
+    return Prediction(
+        id=None,
+        location=location,
+        expected_power_output=expected_power_output,
+        power_category="medium",
+    )
 
 
 app.include_router(router)
