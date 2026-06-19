@@ -1,18 +1,18 @@
 import io
 import os
 from contextlib import asynccontextmanager
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 import aiocache
 import contextily
 import numpy as np
 import scipy.interpolate
 from fastapi import APIRouter, FastAPI, Query, Response
-from geojson_pydantic import Point, Polygon
+from geojson_pydantic import Feature, FeatureCollection, Point, Polygon
 from geojson_pydantic.types import Position2D
 from matplotlib import pyplot as plt
 from numpy import dtype, float64, ndarray
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 from pymongo import AsyncMongoClient
 
 FIGURE_SIZE: tuple[int, int] = (12, 10)
@@ -49,15 +49,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 router = APIRouter(prefix="/api/v1")
-app.include_router(router)
 
-Longitude = Annotated[float, Query(ge=-90, le=90)]
-Latitude = Annotated[float, Query(ge=-180, le=180)]
+Longitude = Annotated[float, Query(ge=-180, le=180)]
+Latitude = Annotated[float, Query(ge=-90, le=90)]
 
 
 class Prediction(BaseModel):
+    id: Annotated[str, BeforeValidator(str)] = Field(validation_alias="_id")
     location: Point
-    expected_power_output: float = Field(alias="expectedPowerOutput")
+    expected_power_output: float = Field(serialization_alias="expectedPowerOutput")
+    power_category: Literal["low"] | Literal["medium"] | Literal["high"] = Field(
+        serialization_alias="powerCategory"
+    )
 
 
 class DiagramResponse(Response):
@@ -162,6 +165,33 @@ async def map_post(polygon: Polygon) -> DiagramResponse:
     return generate_heatmap(predictions)
 
 
+@router.get("/predictions/bbox")
+async def predictions_bbox(
+    west: Longitude, south: Latitude, east: Longitude, north: Latitude
+) -> FeatureCollection:
+    results = (
+        await mongo.client[MONGO_DB][MONGO_COLLECTION]
+        .find({"location": {"$geoWithin": {"$box": [[west, south], [east, north]]}}})
+        .to_list()
+    )
+    predictions = [Prediction.model_validate(result) for result in results]
+    return FeatureCollection(
+        type="FeatureCollection",
+        features=[
+            Feature(
+                type="Feature",
+                id=prediction.id,
+                geometry=prediction.location,
+                properties={
+                    "expectedPowerOutput": prediction.expected_power_output,
+                    "powerCategory": prediction.power_category,
+                },
+            )
+            for prediction in predictions
+        ],
+    )
+
+
 @router.get("/nearest")
 async def nearest(lng: Longitude, lat: Latitude) -> Prediction:
     return await get_nearest_prediction(
@@ -171,3 +201,6 @@ async def nearest(lng: Longitude, lat: Latitude) -> Prediction:
 
 @router.get("/interpolated")
 async def interpolated(lng: Longitude, lat: Latitude) -> Prediction: ...
+
+
+app.include_router(router)
