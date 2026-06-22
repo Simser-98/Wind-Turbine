@@ -16,13 +16,9 @@ const POWER_RAMP = [
     [1.0, [26, 150, 64]]
 ];
 
-// Heatmap intensity gradient: low -> cool, high -> hot.
-const HEAT_GRADIENT = {
-    0.2: "#2c7bb6",
-    0.5: "#ffff8c",
-    0.8: "#f59e0b",
-    1.0: "#d7191c"
-};
+// Predictions sit on a regular 0.2 degree grid; half-step = cell radius.
+const GRID_HALF = 0.1;
+const LOG_FLOOR = 1e-4;   // smallest power we still distinguish on the log scale
 
 const map = L.map("map").fitBounds([
     [51.87, 4.20],  // south-west: below Rotterdam
@@ -35,11 +31,11 @@ L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
 }).addTo(map);
 
 const markersLayer = L.layerGroup().addTo(map);
+const gridLayer = L.layerGroup();
 const loadedPoints = new Set();
-const points = [];   // { marker, lat, lng, power, category }
+const points = [];   // { marker, cell, lat, lng, power, category }
 
-let heatLayer = null;
-let mode = "category";
+let mode = "category";   // "category" | "power" | "heatmap"
 let powerMin = Infinity;
 let powerMax = -Infinity;
 let loadTimeout = null;
@@ -63,54 +59,46 @@ function rampColor(t) {
     return "rgb(26, 150, 64)";
 }
 
+// Power spans many orders of magnitude -> normalise on a log scale.
+function normPower(power) {
+    if (power == null || !isFinite(power) || !isFinite(powerMin) || !isFinite(powerMax)) {
+        return null;
+    }
+    const lo = Math.log10(Math.max(powerMin, LOG_FLOOR));
+    const hi = Math.log10(Math.max(powerMax, LOG_FLOOR));
+    const v = Math.log10(Math.max(power, LOG_FLOOR));
+    const span = hi - lo;
+    return span > 0 ? (v - lo) / span : 0.5;
+}
+
 function categoryColor(category) {
     return CATEGORY_COLORS[category] || UNKNOWN_COLOR;
 }
 
 function powerColor(power) {
-    if (power == null || !isFinite(power)) {
-        return UNKNOWN_COLOR;
-    }
-    const span = powerMax - powerMin;
-    const t = span > 0 ? (power - powerMin) / span : 0.5;
-    return rampColor(t);
+    const t = normPower(power);
+    return t == null ? UNKNOWN_COLOR : rampColor(t);
 }
 
-function colorFor(point) {
+function markerColor(point) {
     return mode === "category" ? categoryColor(point.category) : powerColor(point.power);
 }
 
+// Repaint markers (mode-dependent) and grid cells (always power, log-scaled).
 function applyStyles() {
     points.forEach(point => {
-        const color = colorFor(point);
-        point.marker.setStyle({ color: color, fillColor: color });
+        const mColor = markerColor(point);
+        point.marker.setStyle({ color: mColor, fillColor: mColor });
+        const cColor = powerColor(point.power);
+        point.cell.setStyle({ fillColor: cColor });
     });
-}
-
-function heatData() {
-    const span = powerMax - powerMin;
-    return points.map(point => {
-        const intensity = span > 0 && point.power != null
-            ? (point.power - powerMin) / span
-            : 0.5;
-        return [point.lat, point.lng, Math.max(0.05, intensity)];
-    });
-}
-
-function refreshHeat() {
-    if (!heatLayer) {
-        heatLayer = L.heatLayer([], {
-            radius: 25,
-            blur: 18,
-            maxZoom: 17,
-            minOpacity: 0.25,
-            gradient: HEAT_GRADIENT
-        });
-    }
-    heatLayer.setLatLngs(heatData());
 }
 
 function renderLegend() {
+    const hasRange = isFinite(powerMin) && isFinite(powerMax);
+    const lo = hasRange ? powerMin.toFixed(1) : "–";
+    const hi = hasRange ? powerMax.toFixed(1) : "–";
+
     if (mode === "category") {
         legendTitleEl.textContent = "Power category";
         legendEl.innerHTML = `
@@ -121,29 +109,14 @@ function renderLegend() {
         return;
     }
 
-    const hasRange = isFinite(powerMin) && isFinite(powerMax);
-    const lo = hasRange ? powerMin.toFixed(1) : "–";
-    const hi = hasRange ? powerMax.toFixed(1) : "–";
-
-    if (mode === "heatmap") {
-        legendTitleEl.textContent = "Output density";
-        const gradient = Object.entries(HEAT_GRADIENT)
-            .map(([stop, color]) => `${color} ${Math.round(Number(stop) * 100)}%`)
-            .join(", ");
-        legendEl.innerHTML = `
-            <div class="legend-gradient" style="background:linear-gradient(90deg, ${gradient})"></div>
-            <div class="legend-scale"><span>${lo} kW</span><span>${hi} kW</span></div>
-        `;
-        return;
-    }
-
-    legendTitleEl.textContent = "Power output (kW)";
     const gradient = POWER_RAMP
         .map(([stop, c]) => `rgb(${c[0]}, ${c[1]}, ${c[2]}) ${Math.round(stop * 100)}%`)
         .join(", ");
+    legendTitleEl.textContent = mode === "heatmap" ? "Output heatmap (kW)" : "Power output (kW)";
     legendEl.innerHTML = `
         <div class="legend-gradient" style="background:linear-gradient(90deg, ${gradient})"></div>
         <div class="legend-scale"><span>${lo} kW</span><span>${hi} kW</span></div>
+        <p class="muted">Log scale</p>
     `;
 }
 
@@ -158,15 +131,12 @@ function setMode(nextMode) {
 
     if (mode === "heatmap") {
         map.removeLayer(markersLayer);
-        refreshHeat();
-        heatLayer.addTo(map);
+        gridLayer.addTo(map);
     } else {
-        if (heatLayer) {
-            map.removeLayer(heatLayer);
-        }
+        map.removeLayer(gridLayer);
         markersLayer.addTo(map);
-        applyStyles();
     }
+    applyStyles();
     renderLegend();
 }
 
@@ -234,27 +204,31 @@ async function loadPredictionsForVisibleArea() {
             }
 
             const point = { lat: latitude, lng: longitude, power: power, category: properties.powerCategory };
-            const color = colorFor(point);
 
+            const mColor = markerColor(point);
             point.marker = L.circleMarker([latitude, longitude], {
                 radius: 6,
                 weight: 1.5,
-                color: color,
-                fillColor: color,
+                color: mColor,
+                fillColor: mColor,
                 fillOpacity: 0.8
             })
                 .addTo(markersLayer)
                 .bindPopup(popupHtml(properties, latitude, longitude));
 
+            point.cell = L.rectangle(
+                [[latitude - GRID_HALF, longitude - GRID_HALF], [latitude + GRID_HALF, longitude + GRID_HALF]],
+                { stroke: false, fillColor: powerColor(power), fillOpacity: 0.6 }
+            )
+                .addTo(gridLayer)
+                .bindPopup(popupHtml(properties, latitude, longitude));
+
             points.push(point);
         });
 
-        // Power scale shifted -> recolour everything so it stays comparable.
-        if (rangeChanged && mode === "power") {
+        // New min/max shifts the whole log scale -> repaint so cells stay comparable.
+        if (rangeChanged) {
             applyStyles();
-        }
-        if (mode === "heatmap") {
-            refreshHeat();
         }
         renderLegend();
 
