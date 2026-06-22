@@ -7,13 +7,11 @@ const CATEGORY_COLORS = {
 };
 const UNKNOWN_COLOR = "#94a3b8";
 
-// RdYlGn ramp: low power -> red, high power -> green.
+// Simple red -> yellow -> green ramp: low power -> red, high power -> green.
 const POWER_RAMP = [
-    [0.0, [215, 25, 28]],
-    [0.25, [253, 174, 97]],
-    [0.5, [255, 255, 191]],
-    [0.75, [166, 217, 106]],
-    [1.0, [26, 150, 64]]
+    [0.0, [220, 38, 38]],    // red
+    [0.5, [250, 204, 21]],   // yellow
+    [1.0, [22, 163, 74]]     // green
 ];
 
 // Predictions sit on a regular 0.2 degree grid; half-step = cell radius.
