@@ -16,6 +16,14 @@ const POWER_RAMP = [
     [1.0, [26, 150, 64]]
 ];
 
+// Heatmap intensity gradient: low -> cool, high -> hot.
+const HEAT_GRADIENT = {
+    0.2: "#2c7bb6",
+    0.5: "#ffff8c",
+    0.8: "#f59e0b",
+    1.0: "#d7191c"
+};
+
 const map = L.map("map").fitBounds([
     [51.87, 4.20],  // south-west: below Rotterdam
     [52.13, 4.55]   // north-east: above The Hague
@@ -28,8 +36,9 @@ L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r
 
 const markersLayer = L.layerGroup().addTo(map);
 const loadedPoints = new Set();
-const points = [];   // { marker, power, category }
+const points = [];   // { marker, lat, lng, power, category }
 
+let heatLayer = null;
 let mode = "category";
 let powerMin = Infinity;
 let powerMax = -Infinity;
@@ -78,6 +87,29 @@ function applyStyles() {
     });
 }
 
+function heatData() {
+    const span = powerMax - powerMin;
+    return points.map(point => {
+        const intensity = span > 0 && point.power != null
+            ? (point.power - powerMin) / span
+            : 0.5;
+        return [point.lat, point.lng, Math.max(0.05, intensity)];
+    });
+}
+
+function refreshHeat() {
+    if (!heatLayer) {
+        heatLayer = L.heatLayer([], {
+            radius: 25,
+            blur: 18,
+            maxZoom: 17,
+            minOpacity: 0.25,
+            gradient: HEAT_GRADIENT
+        });
+    }
+    heatLayer.setLatLngs(heatData());
+}
+
 function renderLegend() {
     if (mode === "category") {
         legendTitleEl.textContent = "Power category";
@@ -89,13 +121,26 @@ function renderLegend() {
         return;
     }
 
+    const hasRange = isFinite(powerMin) && isFinite(powerMax);
+    const lo = hasRange ? powerMin.toFixed(1) : "–";
+    const hi = hasRange ? powerMax.toFixed(1) : "–";
+
+    if (mode === "heatmap") {
+        legendTitleEl.textContent = "Output density";
+        const gradient = Object.entries(HEAT_GRADIENT)
+            .map(([stop, color]) => `${color} ${Math.round(Number(stop) * 100)}%`)
+            .join(", ");
+        legendEl.innerHTML = `
+            <div class="legend-gradient" style="background:linear-gradient(90deg, ${gradient})"></div>
+            <div class="legend-scale"><span>${lo} kW</span><span>${hi} kW</span></div>
+        `;
+        return;
+    }
+
     legendTitleEl.textContent = "Power output (kW)";
     const gradient = POWER_RAMP
         .map(([stop, c]) => `rgb(${c[0]}, ${c[1]}, ${c[2]}) ${Math.round(stop * 100)}%`)
         .join(", ");
-    const hasRange = isFinite(powerMin) && isFinite(powerMax);
-    const lo = hasRange ? powerMin.toFixed(1) : "–";
-    const hi = hasRange ? powerMax.toFixed(1) : "–";
     legendEl.innerHTML = `
         <div class="legend-gradient" style="background:linear-gradient(90deg, ${gradient})"></div>
         <div class="legend-scale"><span>${lo} kW</span><span>${hi} kW</span></div>
@@ -109,7 +154,19 @@ function setMode(nextMode) {
     mode = nextMode;
     document.getElementById("mode-category").classList.toggle("is-active", mode === "category");
     document.getElementById("mode-power").classList.toggle("is-active", mode === "power");
-    applyStyles();
+    document.getElementById("mode-heatmap").classList.toggle("is-active", mode === "heatmap");
+
+    if (mode === "heatmap") {
+        map.removeLayer(markersLayer);
+        refreshHeat();
+        heatLayer.addTo(map);
+    } else {
+        if (heatLayer) {
+            map.removeLayer(heatLayer);
+        }
+        markersLayer.addTo(map);
+        applyStyles();
+    }
     renderLegend();
 }
 
@@ -176,7 +233,7 @@ async function loadPredictionsForVisibleArea() {
                 if (power > powerMax) { powerMax = power; rangeChanged = true; }
             }
 
-            const point = { power: power, category: properties.powerCategory };
+            const point = { lat: latitude, lng: longitude, power: power, category: properties.powerCategory };
             const color = colorFor(point);
 
             point.marker = L.circleMarker([latitude, longitude], {
@@ -196,6 +253,9 @@ async function loadPredictionsForVisibleArea() {
         if (rangeChanged && mode === "power") {
             applyStyles();
         }
+        if (mode === "heatmap") {
+            refreshHeat();
+        }
         renderLegend();
 
         countEl.textContent = String(points.length);
@@ -213,6 +273,7 @@ function debounceMapLoad() {
 
 document.getElementById("mode-category").addEventListener("click", () => setMode("category"));
 document.getElementById("mode-power").addEventListener("click", () => setMode("power"));
+document.getElementById("mode-heatmap").addEventListener("click", () => setMode("heatmap"));
 map.on("moveend", debounceMapLoad);
 
 renderLegend();
