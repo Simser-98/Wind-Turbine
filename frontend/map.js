@@ -1,4 +1,7 @@
-const map = L.map("map").setView([52.2, 5.3], 7);
+const map = L.map("map").fitBounds([
+    [51.87, 4.20],  // south-west: below Rotterdam
+    [52.13, 4.55]   // north-east: above The Hague
+]);
 
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 18,
