@@ -1,6 +1,8 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Wind Turbine Suitability Map</title>
 
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
@@ -8,21 +10,44 @@
 </head>
 
 <body>
-    <h1>Wind Turbine Suitability Map</h1>
+    <header class="topbar">
+        <div class="brand">
+            <span class="brand-mark">⌁</span>
+            <div>
+                <h1>Wind Turbine Suitability Map</h1>
+                <p class="subtitle">
+                    Predicted turbine power output across the Netherlands &mdash;
+                    pan and zoom to load the visible area.
+                </p>
+            </div>
+        </div>
 
-    <p>
-        This map displays predicted wind turbine power output for different locations
-        in the Netherlands. The colors represent relative suitability based on expected
-        power output.
-    </p>
+        <div class="view-toggle" role="group" aria-label="Map colouring mode">
+            <button id="mode-category" class="toggle-btn is-active" type="button">
+                By category
+            </button>
+            <button id="mode-power" class="toggle-btn" type="button">
+                By power output
+            </button>
+        </div>
+    </header>
 
-    <div id="map"></div>
+    <main class="layout">
+        <div id="map"></div>
 
-    <div class="legend">
-        <p><span class="low"></span> Low predicted output</p>
-        <p><span class="medium"></span> Medium predicted output</p>
-        <p><span class="high"></span> High predicted output</p>
-    </div>
+        <aside class="panel">
+            <div class="panel-card">
+                <h2 id="legend-title">Power category</h2>
+                <div id="legend"></div>
+            </div>
+
+            <div class="panel-card">
+                <h2>Status</h2>
+                <p id="status" class="status">Loading predictions&hellip;</p>
+                <p class="muted"><span id="count">0</span> points loaded</p>
+            </div>
+        </aside>
+    </main>
 
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script src="map.js"></script>
