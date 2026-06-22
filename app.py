@@ -7,7 +7,7 @@ import aiocache
 import contextily
 import numpy as np
 import scipy.interpolate
-from fastapi import APIRouter, FastAPI, Query, Response
+from fastapi import FastAPI, Query, Response
 from geojson_pydantic import Feature, FeatureCollection, Point, Polygon
 from geojson_pydantic.types import Position2D
 from matplotlib import pyplot as plt
@@ -49,7 +49,6 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-router = APIRouter(prefix="/api/v1")
 
 Longitude = Annotated[float, Query(ge=-180, le=180)]
 Latitude = Annotated[float, Query(ge=-90, le=90)]
@@ -155,18 +154,18 @@ def generate_heatmap(predictions: list[Prediction]) -> DiagramResponse:
     return DiagramResponse(output_buffer.getbuffer())
 
 
-@router.get("/live")
+@app.get("/live")
 async def live() -> None:
     return
 
 
-@router.get("/map", response_class=DiagramResponse)
+@app.get("/map", response_class=DiagramResponse)
 async def map_get() -> DiagramResponse:
     predictions = await get_all_predictions()
     return generate_heatmap(predictions)
 
 
-@router.post("/map", response_class=DiagramResponse)
+@app.post("/map", response_class=DiagramResponse)
 async def map_post(polygon: Polygon) -> DiagramResponse:
     results = (
         await mongo.client[MONGO_DB][MONGO_COLLECTION]
@@ -177,7 +176,7 @@ async def map_post(polygon: Polygon) -> DiagramResponse:
     return generate_heatmap(predictions)
 
 
-@router.get("/predictions/bbox")
+@app.get("/predictions/bbox")
 async def predictions_bbox(
     west: Longitude, south: Latitude, east: Longitude, north: Latitude
 ) -> FeatureCollection:
@@ -193,14 +192,14 @@ async def predictions_bbox(
     )
 
 
-@router.get("/nearest")
+@app.get("/nearest")
 async def nearest(lng: Longitude, lat: Latitude) -> Prediction:
     return await get_nearest_prediction(
         Point(type="Point", coordinates=Position2D(longitude=lng, latitude=lat))
     )
 
 
-@router.get("/interpolated")
+@app.get("/interpolated")
 async def interpolated(lng: Longitude, lat: Latitude) -> Prediction:
     location = Point(type="Point", coordinates=Position2D(longitude=lng, latitude=lat))
 
@@ -221,6 +220,3 @@ async def interpolated(lng: Longitude, lat: Latitude) -> Prediction:
         expected_power_output=expected_power_output,
         power_category="medium",
     )
-
-
-app.include_router(router)
