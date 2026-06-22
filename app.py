@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI):
     await mongo.client.close()
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, root_path="/api/v1")
 
 Longitude = Annotated[float, Query(ge=-180, le=180)]
 Latitude = Annotated[float, Query(ge=-90, le=90)]
