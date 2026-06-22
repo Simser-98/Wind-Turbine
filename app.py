@@ -63,6 +63,17 @@ class Prediction(BaseModel):
         serialization_alias="powerCategory"
     )
 
+    def to_geojson_feature(self) -> Feature:
+        return Feature(
+            type="Feature",
+            geometry=self.location,
+            properties={
+                "expectedPowerOutput": self.expected_power_output,
+                "powerCategory": self.power_category,
+            },
+            id=self.id,
+        )
+
 
 class DiagramResponse(Response):
     media_type = "image/svg+xml"
@@ -178,18 +189,7 @@ async def predictions_bbox(
     predictions = [Prediction.model_validate(result) for result in results]
     return FeatureCollection(
         type="FeatureCollection",
-        features=[
-            Feature(
-                type="Feature",
-                id=prediction.id,
-                geometry=prediction.location,
-                properties={
-                    "expectedPowerOutput": prediction.expected_power_output,
-                    "powerCategory": prediction.power_category,
-                },
-            )
-            for prediction in predictions
-        ],
+        features=[prediction.to_geojson_feature() for prediction in predictions],
     )
 
 
