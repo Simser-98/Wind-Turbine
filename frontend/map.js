@@ -16,7 +16,16 @@ const POWER_RAMP = [
 
 // Predictions sit on a regular 0.2 degree grid; half-step = cell radius.
 const GRID_HALF = 0.1;
-const LOG_FLOOR = 1e-4;   // smallest power we still distinguish on the log scale
+
+// Power (kW) -> ramp position, anchored to the category boundaries observed in
+// the data: low < 150, medium 150-351, high > 351. Keeps the power colouring
+// consistent with the category colouring.
+const POWER_BREAKS = [
+    [0, 0.0],      // red
+    [150, 0.34],   // low / medium boundary
+    [351, 0.66],   // medium / high boundary
+    [700, 1.0]     // solidly high -> green
+];
 
 const map = L.map("map").fitBounds([
     [51.87, 4.20],  // south-west: below Rotterdam
@@ -57,16 +66,22 @@ function rampColor(t) {
     return "rgb(26, 150, 64)";
 }
 
-// Power spans many orders of magnitude -> normalise on a log scale.
+// Map a power value to a ramp position using the category-aligned breakpoints.
 function normPower(power) {
-    if (power == null || !isFinite(power) || !isFinite(powerMin) || !isFinite(powerMax)) {
+    if (power == null || !isFinite(power)) {
         return null;
     }
-    const lo = Math.log10(Math.max(powerMin, LOG_FLOOR));
-    const hi = Math.log10(Math.max(powerMax, LOG_FLOOR));
-    const v = Math.log10(Math.max(power, LOG_FLOOR));
-    const span = hi - lo;
-    return span > 0 ? (v - lo) / span : 0.5;
+    if (power <= POWER_BREAKS[0][0]) {
+        return 0;
+    }
+    for (let i = 1; i < POWER_BREAKS.length; i++) {
+        const [hx, ht] = POWER_BREAKS[i];
+        const [lx, lt] = POWER_BREAKS[i - 1];
+        if (power <= hx) {
+            return lt + (ht - lt) * ((power - lx) / (hx - lx));
+        }
+    }
+    return 1;
 }
 
 function categoryColor(category) {
@@ -93,10 +108,6 @@ function applyStyles() {
 }
 
 function renderLegend() {
-    const hasRange = isFinite(powerMin) && isFinite(powerMax);
-    const lo = hasRange ? powerMin.toFixed(1) : "–";
-    const hi = hasRange ? powerMax.toFixed(1) : "–";
-
     if (mode === "category") {
         legendTitleEl.textContent = "Power category";
         legendEl.innerHTML = `
@@ -113,8 +124,7 @@ function renderLegend() {
     legendTitleEl.textContent = mode === "heatmap" ? "Output heatmap (kW)" : "Power output (kW)";
     legendEl.innerHTML = `
         <div class="legend-gradient" style="background:linear-gradient(90deg, ${gradient})"></div>
-        <div class="legend-scale"><span>${lo} kW</span><span>${hi} kW</span></div>
-        <p class="muted">Log scale</p>
+        <div class="legend-scale"><span>0</span><span>150</span><span>351</span><span>700+ kW</span></div>
     `;
 }
 
