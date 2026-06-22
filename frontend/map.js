@@ -28,8 +28,8 @@ const POWER_BREAKS = [
 ];
 
 const map = L.map("map").fitBounds([
-    [51.74, 4.02],  // south-west: below Rotterdam
-    [52.26, 4.73]   // north-east: above The Hague
+    [51.82, 4.15],  // south-west
+    [52.34, 4.86]   // north-east
 ]);
 
 L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
