@@ -28,8 +28,8 @@ const POWER_BREAKS = [
 ];
 
 const map = L.map("map").fitBounds([
-    [51.87, 4.20],  // south-west: below Rotterdam
-    [52.13, 4.55]   // north-east: above The Hague
+    [51.74, 4.02],  // south-west: below Rotterdam
+    [52.26, 4.73]   // north-east: above The Hague
 ]);
 
 L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
@@ -42,7 +42,7 @@ const gridLayer = L.layerGroup();
 const loadedPoints = new Set();
 const points = [];   // { marker, cell, lat, lng, power, category }
 
-let mode = "category";   // "category" | "power" | "heatmap"
+let mode = "category";   // "category" = markers by category, "power" = grid heatmap
 let powerMin = Infinity;
 let powerMax = -Infinity;
 let loadTimeout = null;
@@ -94,16 +94,15 @@ function powerColor(power) {
 }
 
 function markerColor(point) {
-    return mode === "category" ? categoryColor(point.category) : powerColor(point.power);
+    return categoryColor(point.category);
 }
 
-// Repaint markers (mode-dependent) and grid cells (always power, log-scaled).
+// Repaint category markers and power grid cells.
 function applyStyles() {
     points.forEach(point => {
         const mColor = markerColor(point);
         point.marker.setStyle({ color: mColor, fillColor: mColor });
-        const cColor = powerColor(point.power);
-        point.cell.setStyle({ fillColor: cColor });
+        point.cell.setStyle({ fillColor: powerColor(point.power) });
     });
 }
 
@@ -121,7 +120,7 @@ function renderLegend() {
     const gradient = POWER_RAMP
         .map(([stop, c]) => `rgb(${c[0]}, ${c[1]}, ${c[2]}) ${Math.round(stop * 100)}%`)
         .join(", ");
-    legendTitleEl.textContent = mode === "heatmap" ? "Output heatmap (kW)" : "Power output (kW)";
+    legendTitleEl.textContent = "Power output (kW)";
     legendEl.innerHTML = `
         <div class="legend-gradient" style="background:linear-gradient(90deg, ${gradient})"></div>
         <div class="legend-scale"><span>0</span><span>150</span><span>351</span><span>700+ kW</span></div>
@@ -135,9 +134,8 @@ function setMode(nextMode) {
     mode = nextMode;
     document.getElementById("mode-category").classList.toggle("is-active", mode === "category");
     document.getElementById("mode-power").classList.toggle("is-active", mode === "power");
-    document.getElementById("mode-heatmap").classList.toggle("is-active", mode === "heatmap");
 
-    if (mode === "heatmap") {
+    if (mode === "power") {
         map.removeLayer(markersLayer);
         gridLayer.addTo(map);
     } else {
@@ -255,7 +253,6 @@ function debounceMapLoad() {
 
 document.getElementById("mode-category").addEventListener("click", () => setMode("category"));
 document.getElementById("mode-power").addEventListener("click", () => setMode("power"));
-document.getElementById("mode-heatmap").addEventListener("click", () => setMode("heatmap"));
 map.on("moveend", debounceMapLoad);
 
 renderLegend();
